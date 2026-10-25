@@ -1,0 +1,22 @@
+{
+  "name": "crm-ventas",
+  "version": "0.1.0",
+  "description": "",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node --disable-warning=ExperimentalWarning src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2"
+  }
+}
