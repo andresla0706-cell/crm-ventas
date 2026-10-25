@@ -157,7 +157,7 @@
     const sub = $('#brandSub'); sub.textContent = empresa; sub.hidden = !empresa;
     document.title = empresa ? `Zigga · ${empresa}` : 'Zigga';
     $('#meAvatar').textContent = initials(S.user.nombre); $('#meName').textContent = S.user.nombre;
-    $('#meRole').textContent = `${isAdmin() ? 'Administrador' : 'Vendedor'} · ${areaLabel(S.user.area)}`;
+    $('#meRole').textContent = `${isAdmin() ? 'Administrador' : 'Vendedor'}${bothAreas() ? '' : ` · ${areaLabel(S.user.area)}`}`;
     const badges = { tareas: taskBadge(), lista: isAdmin() ? S.sinAsignar : 0 };
     const nav = VIEWS.filter((v) => !v.admin || isAdmin());
     $('#nav').innerHTML = nav.map((v) => `<button class="navitem ${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}" title="${v.id === 'lista' ? 'Leads sin asignar' : 'Tareas vencidas o para hoy'}">${badges[v.id]}</span>` : ''}</button>`).join('');
@@ -569,22 +569,22 @@
 
   // ---------- cuenta ----------
   function renderCuenta() {
-    let theme = 'auto'; try { theme = localStorage.getItem('crm_theme') || 'auto'; } catch { /* sin storage */ }
+    let theme = 'dark'; try { theme = localStorage.getItem('crm_theme') === 'light' ? 'light' : 'dark'; } catch { /* sin storage */ }
     fresh().innerHTML = `<div class="stack" style="max-width:520px">
       <div class="panel"><h2>${h(S.user.nombre)}</h2><div class="small muted">Usuario <code>${h(S.user.username)}</code> · ${isAdmin() ? 'Administrador' : `Vendedor · ${areaLabel(S.user.area)}`}</div></div>
       <div class="panel"><h2>Cambiar contraseña</h2>
         <label class="field">Contraseña actual<input class="input" id="pActual" type="password" autocomplete="current-password"></label>
         <label class="field">Nueva contraseña<input class="input" id="pNueva" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></label>
         <div><button class="btn primary" id="pOk">Actualizar</button></div></div>
-      <div class="panel"><h2>Apariencia</h2><div class="seg" id="themeSeg">${[['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Oscuro']].map(([v, t]) => `<button class="${theme === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div></div>
+      <div class="panel"><h2>Apariencia</h2><div class="seg" id="themeSeg">${[['dark', 'Oscuro'], ['light', 'Claro']].map(([v, t]) => `<button class="${theme === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div></div>
       <div class="panel"><button class="btn" id="logout2">Cerrar sesión</button></div></div>`;
     $('#pOk').onclick = async () => { try { await api('POST', '/api/me/password', { actual: $('#pActual').value, nueva: $('#pNueva').value }); toast('Contraseña actualizada', 'good'); $('#pActual').value = $('#pNueva').value = ''; } catch (e) { fail(e); } };
     $('#themeSeg').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme(b.dataset.v); renderCuenta(); };
     $('#logout2').onclick = () => $('#logoutBtn').click();
   }
   function setTheme(v) {
-    try { if (v === 'auto') localStorage.removeItem('crm_theme'); else localStorage.setItem('crm_theme', v); } catch { /* sin storage */ }
-    if (v === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', v);
+    try { if (v === 'light') localStorage.setItem('crm_theme', 'light'); else localStorage.removeItem('crm_theme'); } catch { /* sin storage */ }
+    if (v === 'light') document.documentElement.setAttribute('data-theme', 'light'); else document.documentElement.removeAttribute('data-theme');
   }
 
   // ---------- modales ----------
