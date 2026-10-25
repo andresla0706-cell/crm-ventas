@@ -10,6 +10,8 @@ import { startReparto, repartirLeads } from './reparto.js';
 import { startPrioridad, recalcularPrioridades } from './prioridad.js';
 import { iaConfig, chatZigga, consultarSQL } from './ia.js';
 import { startCoach, generarCoach, coachDeHoy, marcarVisto } from './coach.js';
+import { startBackups, hacerBackup, listarBackups, backupDir } from './backup.js';
+import { ensurePush, publicKey, suscribir, darDeBaja, contarSubs, notificarUsuario, startRecordatorios, leadAviso } from './push.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, publicUser,
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
@@ -24,6 +26,7 @@ const WEBHOOK_KEY = process.env.WEBHOOK_KEY || '';
 
 const db = openDb(DB_FILE);
 bootstrapAdmin();
+ensurePush(db);
 
 const app = express();
 app.set('trust proxy', 1);
@@ -162,6 +165,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     webhook_configurado: !!WEBHOOK_KEY,
     ia: { activa: iaConfig().activa, modelo: iaConfig().model },
     coach: coachDeHoy(db, req.user.id),
+    push: { dispositivos: contarSubs(db, req.user.id) },
     server_time: nowIso(),
   });
 });
@@ -202,7 +206,9 @@ app.post('/api/leads', requireAuth, (req, res) => {
   const marks = stageMarks(config, area, etapa, {}, now);
   if (Object.keys(marks).length) applyMarks(id, marks);
   try { recalcularPrioridades(db, [id]); } catch (e) { console.warn('[prioridad]', e.message); }
-  res.status(201).json({ lead: rowToLead(q.leadById.get(id)) });
+  const creado = rowToLead(q.leadById.get(id));
+  if (responsable_id && responsable_id !== req.user.id) notificarUsuario(db, responsable_id, leadAviso(creado)).catch(() => {});
+  res.status(201).json({ lead: creado });
 });
 
 function applyMarks(id, marks) {
@@ -287,7 +293,9 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
   for (const f of ['nombre', 'correo', 'whatsapp', 'pais', 'ciudad']) {
     if (f in sets) act(lead.id, 'campo', `${FIELD_LABEL[f]} actualizado`, req.user.id, lead[f], sets[f]);
   }
-  res.json({ lead: rowToLead(q.leadById.get(lead.id)) });
+  const actualizado = rowToLead(q.leadById.get(lead.id));
+  if ('responsable_id' in sets && sets.responsable_id && sets.responsable_id !== req.user.id) notificarUsuario(db, sets.responsable_id, leadAviso(actualizado)).catch(() => {});
+  res.json({ lead: actualizado });
 });
 
 function fmtDate(iso) {
@@ -317,7 +325,9 @@ app.post('/api/leads/:id/retencion', requireAuth, (req, res) => {
     .run('RET', first, rid, now, now, rid == null ? null : now, rid === req.user.id ? now : null, lead.id);
   act(lead.id, 'area', `Pasó a Retención (etapa ${stageName(config, 'RET', first)})`, req.user.id, 'FTD', 'RET');
   if (rid !== lead.responsable_id) act(lead.id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar: pendiente de entregar al equipo de Retención', req.user.id, userName(lead.responsable_id), userName(rid));
-  res.json({ lead: rowToLead(q.leadById.get(lead.id)) });
+  const enRet = rowToLead(q.leadById.get(lead.id));
+  if (rid && rid !== req.user.id) notificarUsuario(db, rid, { ...leadAviso(enRet), title: `Lead en Retención: ${enRet.nombre}` }).catch(() => {});
+  res.json({ lead: enRet });
 });
 
 app.post('/api/leads/assign', requireAdmin, (req, res) => {
@@ -337,6 +347,7 @@ app.post('/api/leads/assign', requireAdmin, (req, res) => {
     act(id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar', req.user.id, userName(lead.responsable_id), userName(rid));
     n++;
   }
+  if (n && rid && rid !== req.user.id) notificarUsuario(db, rid, { title: n === 1 ? 'Nuevo lead asignado' : `${n} leads nuevos asignados`, body: 'Ya están en tu cola de Siguiente.', url: '/#siguiente', tag: 'asignacion' }).catch(() => {});
   res.json({ actualizados: n, omitidos, aviso: omitidos ? `${omitidos} lead(s) no se asignaron: ${target.nombre} no tiene acceso a su área.` : null });
 });
 
@@ -389,6 +400,38 @@ app.post('/api/zigga/chat', requireAuth, async (req, res) => {
 // Consulta directa de prueba (solo administrador): útil para verificar el acotamiento.
 app.post('/api/zigga/sql', requireAdmin, (req, res) => {
   try { res.json({ rows: consultarSQL(DB_FILE, db, req.user, req.body?.sql) }); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---------- notificaciones del navegador ----------
+app.get('/api/push/vapid', requireAuth, (_req, res) => res.json({ publicKey: publicKey(db) }));
+app.post('/api/push/suscribir', requireAuth, (req, res) => {
+  try { suscribir(db, req.user.id, req.body?.subscription, req.headers['user-agent']); res.json({ ok: true, dispositivos: contarSubs(db, req.user.id) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/push/baja', requireAuth, (req, res) => {
+  darDeBaja(db, req.user.id, String(req.body?.endpoint || ''));
+  res.json({ ok: true, dispositivos: contarSubs(db, req.user.id) });
+});
+app.post('/api/push/probar', requireAuth, async (req, res) => {
+  const n = await notificarUsuario(db, req.user.id, { title: 'Zigga está conectado', body: 'Así te avisaremos cuando te llegue un lead o toque una llamada.', url: '/#siguiente', tag: 'prueba' });
+  res.json({ enviadas: n });
+});
+
+// ---------- copias de seguridad ----------
+app.get('/api/backups', requireAdmin, (_req, res) => {
+  res.json({ backups: listarBackups(DATA_DIR).slice(0, 20) });
+});
+app.post('/api/backups/ahora', requireAdmin, (_req, res) => {
+  try { const f = hacerBackup(db, DATA_DIR, 'manual'); res.json({ archivo: path.basename(f), backups: listarBackups(DATA_DIR).slice(0, 20) }); }
+  catch (e) { res.status(500).json({ error: `No se pudo crear la copia: ${e.message}` }); }
+});
+app.get('/api/backups/descargar', requireAdmin, (req, res) => {
+  try {
+    const nombre = req.query.archivo ? path.basename(String(req.query.archivo)) : null;
+    const file = nombre ? path.join(backupDir(DATA_DIR), nombre) : hacerBackup(db, DATA_DIR, 'descarga');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Esa copia no existe.' });
+    res.download(file, nombre || `zigga-${new Date().toISOString().slice(0, 10)}.sqlite`);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- coach diario ----------
@@ -722,7 +765,8 @@ app.use(express.static(PUBLIC_DIR, {
   index: false, etag: true,
   setHeaders(res, filePath) {
     // Con la firma ?v= en la URL, los archivos pueden guardarse por mucho tiempo.
-    res.setHeader('Cache-Control', /\.(css|js)$/.test(filePath) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+    if (/sw\.js$|manifest\.webmanifest$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    else res.setHeader('Cache-Control', /\.(css|js)$/.test(filePath) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
   },
 }));
 app.get('*', (req, res) => {
@@ -742,4 +786,6 @@ app.listen(PORT, () => {
   startReparto(db);
   startPrioridad(db);
   startCoach(db);
+  startBackups(db, DATA_DIR);
+  startRecordatorios(db);
 });

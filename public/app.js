@@ -132,7 +132,7 @@
     const snap = JSON.stringify([d.leads, d.tasks, d.users, d.config, d.sin_asignar, d.meta?.ultimo]);
     const changed = snap !== S.lastSnapshot;
     S.lastSnapshot = snap;
-    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado, ia: d.ia, coach: d.coach });
+    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado, ia: d.ia, coach: d.coach, push: d.push });
     if (!silent || changed) { render(); if (S.openLeadId) refreshDrawer(); }
   }
   async function start() {
@@ -144,6 +144,7 @@
     clearInterval(S.pollTimer);
     S.pollTimer = setInterval(() => { if (document.visibilityState === 'visible') load(true).catch(() => {}); }, 45000);
     if (S.user.debe_cambiar_clave) passwordModal(true);
+    pushEstado().then((st) => { const on = st === 'on'; if (on !== !!S.pushOn) { S.pushOn = on; render(); } if (on) pushSync(); });
   }
 
   // ---------- navegación ----------
@@ -239,6 +240,45 @@
     $('#coachHide', root)?.addEventListener('click', async () => { const id = S.coach?.id; S.coach = null; render(); try { await api('POST', `/api/coach/${id}/visto`); } catch { /* sin importancia */ } });
   }
 
+  // ---------- notificaciones del navegador ----------
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  async function pushSub() { try { const reg = await navigator.serviceWorker.getRegistration('/'); return reg ? await reg.pushManager.getSubscription() : null; } catch { return null; } }
+  async function pushEstado() {
+    if (!pushSupported()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    const sub = await pushSub();
+    return sub ? 'on' : Notification.permission === 'granted' ? 'granted' : 'default';
+  }
+  const b64ToU8 = (b64) => { const pad = '='.repeat((4 - (b64.length % 4)) % 4); const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...raw].map((c) => c.charCodeAt(0))); };
+  async function pushActivar() {
+    if (!pushSupported()) throw new Error('Este navegador no soporta notificaciones. En iPhone, primero agrega Zigga a la pantalla de inicio.');
+    const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('No diste permiso de notificaciones. Puedes habilitarlo en la configuración del sitio del navegador.');
+    const { publicKey } = await api('GET', '/api/push/vapid');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(publicKey) });
+    const r = await api('POST', '/api/push/suscribir', { subscription: sub.toJSON() });
+    S.push = { dispositivos: r.dispositivos };
+    try { localStorage.removeItem('crm_push_dismiss'); } catch { /* sin storage */ }
+  }
+  async function pushDesactivar() {
+    const sub = await pushSub();
+    if (sub) { try { await api('POST', '/api/push/baja', { endpoint: sub.endpoint }); } catch { /* igual se quita */ } await sub.unsubscribe(); }
+    S.push = { dispositivos: Math.max(0, (S.push?.dispositivos || 1) - 1) };
+  }
+  /** Mantiene la suscripción de este dispositivo registrada en el servidor (por si cambió). */
+  async function pushSync() { try { if (await pushEstado() !== 'on') return; const sub = await pushSub(); if (sub) await api('POST', '/api/push/suscribir', { subscription: sub.toJSON() }); } catch { /* silencioso */ } }
+  function pushBanner() {
+    let dismissed = false; try { dismissed = localStorage.getItem('crm_push_dismiss') === '1'; } catch { /* sin storage */ }
+    if (dismissed || !pushSupported() || Notification.permission === 'denied' || S.pushOn) return '';
+    return `<div class="notice push-notice" id="pushNotice"><span>🔔 Activa las notificaciones para enterarte al instante cuando te llegue un lead o toque una llamada.</span><button class="btn sm primary" id="pushOnBtn">Activar</button><button class="btn sm ghost" id="pushLater">Ahora no</button></div>`;
+  }
+  function wirePushBanner() {
+    $('#pushOnBtn')?.addEventListener('click', async () => { try { await pushActivar(); S.pushOn = true; toast('Notificaciones activadas', 'good'); render(); } catch (e) { fail(e); } });
+    $('#pushLater')?.addEventListener('click', () => { try { localStorage.setItem('crm_push_dismiss', '1'); } catch { /* sin storage */ } $('#pushNotice')?.remove(); });
+  }
+
   // ---------- siguiente ----------
   /** Cola de trabajo de un vendedor: tareas vencidas → próximas acciones vencidas → lo que toca en los próximos 15 min → nuevos sin contactar → programado para más tarde hoy → sin seguimiento. */
   function queueFor(userId) {
@@ -266,7 +306,7 @@
     const urgentes = items.filter((i) => i.bucket <= 1).length;
     const it = items[0];
     const picker = isAdmin() ? `<select class="input" id="sigUser" style="width:auto">${S.users.filter((u) => u.activo !== false).map((u) => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${u.id === S.user.id ? 'Mi cola' : `Cola de ${h(u.nombre)}`}</option>`).join('')}</select>` : '';
-    const top = `${S.coach?.tipo === 'vendedor' ? coachCard() : ''}<div class="filters">${picker}<span class="muted small">${items.length} en cola${urgentes ? ` · <b style="color:var(--bad)">${urgentes} vencida${urgentes === 1 ? '' : 's'}</b>` : ''}</span>${S.skipped.size ? `<button class="btn sm ghost" id="sigUnskip">Volver a mostrar ${S.skipped.size} saltado(s)</button>` : ''}</div>`;
+    const top = `${pushBanner()}${S.coach?.tipo === 'vendedor' ? coachCard() : ''}<div class="filters">${picker}<span class="muted small">${items.length} en cola${urgentes ? ` · <b style="color:var(--bad)">${urgentes} vencida${urgentes === 1 ? '' : 's'}</b>` : ''}</span>${S.skipped.size ? `<button class="btn sm ghost" id="sigUnskip">Volver a mostrar ${S.skipped.size} saltado(s)</button>` : ''}</div>`;
     if (!it) {
       V.innerHTML = `${top}<div class="sig-empty"><div class="sig-check">✓</div><h2>Cola vacía</h2><p class="muted">No hay tareas vencidas, seguimientos para hoy ni leads nuevos sin contactar${isAdmin() && uid !== S.user.id ? ' en esta cola' : ''}.</p></div>`;
       wireSigTop(); return;
@@ -350,7 +390,7 @@
     });
   }
   function wireSigTop() {
-    wireCoach(document);
+    wireCoach(document); wirePushBanner();
     $('#sigUser')?.addEventListener('change', (e) => { S.sigUser = Number(e.target.value); S.skipped.clear(); render(); });
     $('#sigUnskip')?.addEventListener('click', () => { S.skipped.clear(); renderSiguiente(); });
   }
@@ -374,8 +414,8 @@
         <div class="col-head ${s.tipo}"><h3>${h(s.nombre)}</h3><span class="chip count">${items.length}</span>${sum ? `<span class="sum muted num">${money(sum)}</span>` : ''}</div>
         <div class="col-body">${items.map(card).join('') || '<div class="empty small">Sin leads</div>'}</div></div>`;
     }).join('');
-    fresh().innerHTML = `${S.coach?.tipo === 'equipo' ? coachCard() : ''}${filters}<div class="board" id="board">${cols}</div>`;
-    wireCoach(document);
+    fresh().innerHTML = `${pushBanner()}${S.coach?.tipo === 'equipo' ? coachCard() : ''}${filters}<div class="board" id="board">${cols}</div>`;
+    wireCoach(document); wirePushBanner();
     $('#boardResp')?.addEventListener('change', (e) => { S.boardFilter.responsable = e.target.value; renderTablero(); });
     wireBoard();
   }
@@ -764,7 +804,14 @@
           <p class="small muted" style="margin:0">La clave es la variable <code>WEBHOOK_KEY</code> del servidor ${S.webhook ? '<span class="chip good">configurada</span>' : '<span class="chip warn">sin configurar</span>'}. Acepta el lead tal como lo entrega Meta (con <code>field_data</code>) o un objeto simple: <code>{"nombre","correo","whatsapp","pais","ciudad","respuestas":{}}</code>.</p>
         </div>
         <div class="panel"><h2>Exportar</h2><div><a class="btn" href="/api/export.csv">Descargar todos los leads (CSV)</a></div></div>
+        <div class="panel"><h2>Copias de seguridad</h2>
+          <p class="small muted" style="margin:0">Zigga guarda una copia completa de la base de datos cada madrugada (conserva las últimas 14). Descarga una de vez en cuando y guárdala fuera de Railway.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/api/backups/descargar">Descargar base de datos ahora</a><button class="btn ghost" id="bkNow">Crear copia en el servidor</button></div>
+          <div id="bkList" class="small muted">Cargando copias…</div></div>
       </div></div>`;
+    const renderBk = (list) => { const el = $('#bkList'); if (!el) return; el.innerHTML = list.length ? `<div class="list">${list.slice(0, 6).map((b) => `<div class="item"><div class="body"><div class="t num small">${h(b.nombre)}</div><div class="m">${fmtDT(b.creado)} · ${(b.bytes / 1024).toFixed(0)} KB</div></div><a class="btn sm" href="/api/backups/descargar?archivo=${encodeURIComponent(b.nombre)}">Descargar</a></div>`).join('')}</div>` : 'Todavía no hay copias automáticas; la primera se crea esta madrugada.'; };
+    api('GET', '/api/backups').then((d) => renderBk(d.backups)).catch(() => {});
+    $('#bkNow').onclick = async () => { $('#bkNow').disabled = true; try { const d = await api('POST', '/api/backups/ahora'); toast('Copia creada', 'good'); renderBk(d.backups); } catch (e) { fail(e); } $('#bkNow').disabled = false; };
     const drop = $('#drop'), file = $('#file');
     drop.onclick = () => file.click();
     drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
@@ -868,9 +915,22 @@
         <label class="field">Contraseña actual<input class="input" id="pActual" type="password" autocomplete="current-password"></label>
         <label class="field">Nueva contraseña<input class="input" id="pNueva" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></label>
         <div><button class="btn primary" id="pOk">Actualizar</button></div></div>
+      <div class="panel"><h2>Notificaciones</h2>
+        <p class="small muted" style="margin:0">Te avisa en este dispositivo cuando te asignan un lead, cuando llega la hora de una tarea o próxima acción${isAdmin() ? ' y cuando llegan leads sin asignar' : ''}. En iPhone, primero agrega Zigga a la pantalla de inicio (Compartir → Agregar a inicio).</p>
+        <div id="pushPanel" class="small muted">Comprobando…</div></div>
       <div class="panel"><h2>Apariencia</h2><div class="seg" id="themeSeg">${[['dark', 'Oscuro'], ['light', 'Claro']].map(([v, t]) => `<button class="${theme === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div></div>
       <div class="panel"><button class="btn" id="logout2">Cerrar sesión</button></div></div>`;
     $('#pOk').onclick = async () => { try { await api('POST', '/api/me/password', { actual: $('#pActual').value, nueva: $('#pNueva').value }); toast('Contraseña actualizada', 'good'); $('#pActual').value = $('#pNueva').value = ''; } catch (e) { fail(e); } };
+    const paintPush = async () => {
+      const el = $('#pushPanel'); if (!el) return;
+      const st = await pushEstado(); const n = S.push?.dispositivos || 0;
+      const msg = { unsupported: 'Este navegador no soporta notificaciones push.', denied: 'Bloqueaste las notificaciones para este sitio. Habilítalas en la configuración del navegador (candado junto a la dirección) y recarga.', default: `Sin activar en este dispositivo${n ? ` · activas en ${n} dispositivo(s)` : ''}.`, granted: `Permiso dado, falta suscribir este dispositivo${n ? ` · activas en ${n} dispositivo(s)` : ''}.`, on: `Activas en este dispositivo${n > 1 ? ` y en ${n - 1} más` : ''}.` }[st];
+      el.innerHTML = `<div style="display:grid;gap:8px"><div>${msg}</div><div style="display:flex;gap:8px;flex-wrap:wrap">${st === 'on' ? '<button class="btn" id="pushOff">Desactivar aquí</button><button class="btn ghost" id="pushTest">Enviar prueba</button>' : st === 'unsupported' || st === 'denied' ? '' : '<button class="btn primary" id="pushOn">Activar en este dispositivo</button>'}</div></div>`;
+      $('#pushOn') && ($('#pushOn').onclick = async () => { try { await pushActivar(); S.pushOn = true; toast('Notificaciones activadas', 'good'); paintPush(); } catch (e) { fail(e); } });
+      $('#pushOff') && ($('#pushOff').onclick = async () => { await pushDesactivar(); S.pushOn = false; toast('Desactivadas en este dispositivo'); paintPush(); });
+      $('#pushTest') && ($('#pushTest').onclick = async () => { try { const r = await api('POST', '/api/push/probar'); toast(r.enviadas ? 'Prueba enviada; mira la notificación' : 'No hay dispositivos suscritos', r.enviadas ? 'good' : 'bad'); } catch (e) { fail(e); } });
+    };
+    paintPush();
     $('#themeSeg').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; setTheme(b.dataset.v); renderCuenta(); };
     $('#logout2').onclick = () => $('#logoutBtn').click();
   }

@@ -224,6 +224,7 @@ label.field > .input { font-weight: 500; color: var(--fg); font-size: 14px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 .filters select.input, .filters .input { width: auto; min-width: 140px; }
 .notice { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--warn); font-weight: 600; margin-bottom: 12px; }
+.push-notice { background: var(--accent-soft); color: var(--accent-soft-fg); flex-wrap: wrap; max-width: 900px; } .push-notice span { flex: 1 1 320px; }
 
 /* ---------- board ---------- */
 .board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; min-height: 60vh; }

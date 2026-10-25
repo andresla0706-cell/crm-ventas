@@ -1,4 +1,5 @@
-import { getConfig, getSetting, setSetting, nowIso } from './db.js';
+import { getConfig, getSetting, setSetting, nowIso, rowToLead } from './db.js';
+import { notificarUsuario, leadAviso } from './push.js';
 
 /** Vendedores activos con acceso a FTD, en orden estable. */
 function vendedoresFTD(db) {
@@ -38,7 +39,11 @@ export function repartirLeads(db, ids) {
     if (!v) break;
     const now = nowIso();
     const r = upd.run(v.id, now, now, id, 'FTD');
-    if (r.changes) { act.run(id, `Asignado automáticamente a ${v.nombre} (reparto por turnos)`, v.nombre, now); n++; }
+    if (r.changes) {
+      act.run(id, `Asignado automáticamente a ${v.nombre} (reparto por turnos)`, v.nombre, now); n++;
+      const l = rowToLead(db.prepare('SELECT * FROM leads WHERE id = ?').get(id));
+      if (l) notificarUsuario(db, v.id, leadAviso(l)).catch(() => {});
+    }
   }
   return n;
 }
@@ -71,6 +76,8 @@ export function reasignarOlvidados(db, log = console) {
     if (!v) continue;
     upd.run(v.id, now, now, l.id);
     act.run(l.id, `Reasignado a ${v.nombre}: ${anterior} no lo contactó en ${cfg.reasignar_minutos} min`, anterior, v.nombre, now);
+    const full = rowToLead(db.prepare('SELECT * FROM leads WHERE id = ?').get(l.id));
+    if (full) notificarUsuario(db, v.id, { ...leadAviso(full), title: `Lead reasignado a ti: ${full.nombre}` }).catch(() => {});
     n++;
   }
   if (n) log.log(`[reparto] ${n} lead(s) reasignado(s) por falta de contacto`);

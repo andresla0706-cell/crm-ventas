@@ -1,6 +1,7 @@
 import { getConfig, getSetting, setSetting, nowIso } from './db.js';
 import { repartirLeads } from './reparto.js';
 import { recalcularPrioridades } from './prioridad.js';
+import { notificarAdmins } from './push.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -139,6 +140,8 @@ export function insertNewLeads(db, leads, { origen, userId }) {
   if (ids.length) {
     try { recalcularPrioridades(db, ids); } catch (e) { console.warn('[prioridad]', e.message); }
     try { repartidos = repartirLeads(db, ids); } catch (e) { console.warn('[reparto]', e.message); }
+    const sinAsignar = ids.length - repartidos;
+    if (sinAsignar > 0 && origen !== 'import') notificarAdmins(db, ['FTD'], { title: sinAsignar === 1 ? 'Llegó un lead nuevo sin asignar' : `${sinAsignar} leads nuevos sin asignar`, body: origen === 'meta' ? 'Vienen de Meta. Repártelos desde la lista.' : 'Llegaron por webhook. Repártelos desde la lista.', url: '/#lista', tag: 'sin-asignar' }).catch(() => {});
   }
   return { nuevos, repetidos, invalidos, ids, repartidos };
 }
