@@ -360,6 +360,50 @@ app.post('/api/leads/:id/notas', requireAuth, (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+// ---------- marcador del equipo ----------
+app.get('/api/marcador', requireAuth, (req, res) => {
+  const config = getConfig(db);
+  const periodo = ['hoy', 'semana', 'mes'].includes(req.query.periodo) ? req.query.periodo : 'hoy';
+  const desdeD = new Date(); desdeD.setHours(0, 0, 0, 0);
+  if (periodo === 'semana') { const dow = (desdeD.getDay() + 6) % 7; desdeD.setDate(desdeD.getDate() - dow); }
+  if (periodo === 'mes') desdeD.setDate(1);
+  const desde = desdeD.toISOString();
+  const areas = allowedAreas(req.user);
+  const areaSql = `area IN (${areas.map(() => '?').join(',')})`;
+  const areaUsers = areas.includes('FTD') && areas.includes('RET') ? ['FTD', 'RET', 'AMBAS'] : [...areas, 'AMBAS'];
+  const users = db.prepare(`SELECT id, nombre, role, area FROM users WHERE activo = 1 AND area IN (${areaUsers.map(() => '?').join(',')}) ORDER BY nombre`).all(...areaUsers);
+  const perdidaIds = new Set(); for (const a of areas) for (const st of config.etapas[a] || []) if (st.tipo === 'perdida') perdidaIds.add(`${a}:${st.id}`);
+  const leads = db.prepare(`SELECT id, responsable_id, area, etapa, monto, primer_contacto_en, sin_respuesta_en, calificado_en, cliente_en, asignado_en FROM leads WHERE ${areaSql}`).all(...areas);
+  const acts = db.prepare(`SELECT a.user_id, a.tipo, a.texto, a.en FROM activities a JOIN leads l ON l.id = a.lead_id WHERE l.${areaSql} AND a.user_id IS NOT NULL AND a.tipo IN ('llamada','whatsapp','reunion') AND a.en >= ?`).all(...areas, new Date(Date.now() - 45 * 86400000).toISOString());
+  const dayKey = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/Bogota' });
+  const hoy = dayKey(nowIso());
+  const equipo = users.map((u) => {
+    const mine = leads.filter((l) => l.responsable_id === u.id);
+    const mineActs = acts.filter((a) => a.user_id === u.id);
+    const enPeriodo = mineActs.filter((a) => a.en >= desde);
+    const esContacto = (a) => a.tipo !== 'llamada' || !/^No contestó/.test(a.texto || '');
+    const cerrados = mine.filter((l) => l.cliente_en && l.cliente_en >= desde);
+    const dias = new Set(mineActs.filter(esContacto).map((a) => dayKey(a.en)));
+    let racha = 0; const d = new Date(); if (!dias.has(hoy)) d.setDate(d.getDate() - 1);
+    while (dias.has(dayKey(d.toISOString()))) { racha++; d.setDate(d.getDate() - 1); }
+    return {
+      id: u.id, nombre: u.nombre, role: u.role, area: u.area,
+      llamadas: enPeriodo.filter((a) => a.tipo === 'llamada').length,
+      contactos: enPeriodo.filter(esContacto).length,
+      calificados: mine.filter((l) => l.calificado_en && l.calificado_en >= desde).length,
+      cierres: cerrados.length,
+      monto: cerrados.reduce((a, l) => a + (Number(l.monto) || 0), 0),
+      nuevos: mine.filter((l) => l.asignado_en && l.asignado_en >= desde).length,
+      sin_contactar: mine.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en && !perdidaIds.has(`${l.area}:${l.etapa}`)).length,
+      abiertos: mine.filter((l) => !perdidaIds.has(`${l.area}:${l.etapa}`)).length,
+      racha,
+    };
+  }).filter((u) => u.role === 'vendedor' || u.abiertos > 0 || u.contactos > 0);
+  equipo.sort((a, b) => (b.cierres - a.cierres) || (b.monto - a.monto) || (b.calificados - a.calificados) || (b.contactos - a.contactos));
+  const sum = (k) => equipo.reduce((a, u) => a + u[k], 0);
+  res.json({ periodo, desde, equipo, totales: { llamadas: sum('llamadas'), contactos: sum('contactos'), calificados: sum('calificados'), cierres: sum('cierres'), monto: sum('monto'), nuevos: sum('nuevos'), sin_contactar: sum('sin_contactar'), sin_asignar: leads.filter((l) => l.responsable_id == null && !perdidaIds.has(`${l.area}:${l.etapa}`)).length } });
+});
+
 // ---------- resultado de un toque (Modo Siguiente) ----------
 app.post('/api/leads/:id/resultado', requireAuth, (req, res) => {
   const lead = q.leadById.get(Number(req.params.id));

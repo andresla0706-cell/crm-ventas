@@ -15,6 +15,7 @@
 
   const ICONS = {
     siguiente: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    marcador: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
     tablero: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="4" height="8" rx="1"/></svg>',
     lista: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
     tareas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -141,7 +142,7 @@
   const VIEWS = [
     { id: 'siguiente', label: 'Siguiente', admin: false },
     { id: 'tablero', label: 'Tablero', admin: false }, { id: 'lista', label: 'Lista', admin: false }, { id: 'tareas', label: 'Tareas', admin: false },
-    { id: 'metricas', label: 'Métricas', admin: false }, { id: 'equipo', label: 'Equipo', admin: true }, { id: 'importar', label: 'Importar', admin: true },
+    { id: 'metricas', label: 'Métricas', admin: false }, { id: 'marcador', label: 'Marcador', admin: false }, { id: 'equipo', label: 'Equipo', admin: true }, { id: 'importar', label: 'Importar', admin: true },
     { id: 'ajustes', label: 'Ajustes', admin: true }, { id: 'cuenta', label: 'Mi cuenta', admin: false },
   ];
   window.addEventListener('hashchange', route);
@@ -174,9 +175,9 @@
     $('#nav').innerHTML = nav.map((v) => `<button class="navitem ${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}" title="${v.id === 'lista' ? 'Leads sin asignar' : 'Tareas vencidas o para hoy'}">${badges[v.id]}</span>` : ''}</button>`).join('');
     const mobile = nav.filter((v) => ['siguiente', 'tablero', 'lista', 'tareas', 'metricas'].includes(v.id));
     $('#bottomnav').innerHTML = mobile.map((v) => `<button class="${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}">${badges[v.id]}</span>` : ''}</button>`).join('')
-      + `<button class="${['equipo', 'importar', 'ajustes', 'cuenta'].includes(S.view) ? 'on' : ''}" data-more="1">${ICONS.ajustes}<span>Más</span></button>`;
+      + `<button class="${['marcador', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(S.view) ? 'on' : ''}" data-more="1">${ICONS.ajustes}<span>Más</span></button>`;
     if (document.activeElement?.id !== 'q') renderTopbar();
-    const r = { siguiente: renderSiguiente, tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
+    const r = { siguiente: renderSiguiente, tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, marcador: renderMarcador, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
     r();
   }
   /** Reemplaza el contenido de la vista por un nodo nuevo (así no se acumulan listeners). */
@@ -186,12 +187,12 @@
     if (e.target.closest('[data-more]')) moreMenu();
   });
   function moreMenu() {
-    const items = VIEWS.filter((v) => ['equipo', 'importar', 'ajustes', 'cuenta'].includes(v.id) && (!v.admin || isAdmin()));
+    const items = VIEWS.filter((v) => ['marcador', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(v.id) && (!v.admin || isAdmin()));
     modal(`<h2>Más</h2><div class="list">${items.map((v) => `<button class="btn" data-go="${v.id}" onclick="document.getElementById('overlay').innerHTML=''">${v.label}</button>`).join('')}</div>`);
   }
 
   function renderTopbar() {
-    const titles = { siguiente: 'Siguiente', tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
+    const titles = { siguiente: 'Siguiente', marcador: 'Marcador del equipo', tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
     const showArea = ['tablero', 'lista'].includes(S.view) && bothAreas();
     const showSearch = ['tablero', 'lista'].includes(S.view);
     $('#topbar').innerHTML = `
@@ -572,6 +573,40 @@
     $('#mPer').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { f.periodo = b.dataset.v; renderMetricas(); } };
     $('#mArea') && ($('#mArea').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { f.area = b.dataset.v; renderMetricas(); } });
     $('#mResp') && ($('#mResp').onchange = (e) => { f.responsable = e.target.value; renderMetricas(); });
+  }
+
+  // ---------- marcador ----------
+  async function renderMarcador() {
+    const V = fresh();
+    const per = S.marcadorPeriodo || 'hoy';
+    V.innerHTML = `<div class="filters"><div class="seg" id="mkPer">${[['hoy', 'Hoy'], ['semana', 'Semana'], ['mes', 'Mes']].map(([v, t]) => `<button class="${per === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div>
+      <button class="btn sm ghost" id="tvBtn" title="Pantalla completa para TV">⛶ Modo TV</button><span class="muted small" id="mkStamp"></span></div><div id="mkBody" class="muted small">Cargando…</div>`;
+    $('#mkPer').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { S.marcadorPeriodo = b.dataset.v; renderMarcador(); } };
+    $('#tvBtn').onclick = () => { document.body.classList.toggle('tv'); if (document.body.classList.contains('tv')) document.documentElement.requestFullscreen?.().catch(() => {}); else document.exitFullscreen?.().catch(() => {}); };
+    let d; try { d = await api('GET', `/api/marcador?periodo=${per}`); } catch (e) { fail(e); return; }
+    if (S.view !== 'marcador') return;
+    const t = d.totales; const eq = d.equipo;
+    const max = (k) => Math.max(1, ...eq.map((u) => u[k]));
+    const bar = (v, k, cls = '') => `<div class="mk-bar ${cls}"><div class="track"><div class="fill" style="width:${(v / max(k)) * 100}%"></div></div><b class="num">${v}</b></div>`;
+    const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `<span class="faint">${i + 1}</span>`);
+    $('#mkStamp').textContent = `desde ${fmtDT(d.desde)} · se actualiza solo`;
+    $('#mkBody').className = 'stack';
+    $('#mkBody').innerHTML = `
+      <div class="tiles mk-tiles">
+        <div class="tile"><span class="s">Cierres</span><span class="v num">${t.cierres}</span><span class="s faint">${money(t.monto)}</span></div>
+        <div class="tile"><span class="s">Calificados</span><span class="v num">${t.calificados}</span></div>
+        <div class="tile"><span class="s">Contactos</span><span class="v num">${t.contactos}</span><span class="s faint">${t.llamadas} llamadas registradas</span></div>
+        <div class="tile"><span class="s">Leads nuevos</span><span class="v num">${t.nuevos}</span><span class="s faint">${t.sin_asignar ? `${t.sin_asignar} sin asignar` : 'todos asignados'}</span></div>
+        <div class="tile ${t.sin_contactar ? 'alert' : ''}"><span class="s">Sin contactar</span><span class="v num">${t.sin_contactar}</span><span class="s faint">en manos del equipo</span></div>
+      </div>
+      <div class="tablewrap mk"><table>
+        <thead><tr><th></th><th>Vendedor</th><th>Cierres</th><th>Monto</th><th>Calificados</th><th>Contactos</th><th>Sin contactar</th><th>Racha</th></tr></thead>
+        <tbody>${eq.map((u, i) => `<tr class="${i === 0 && u.cierres ? 'lead' : ''}"><td class="num">${medal(i)}</td>
+          <td class="name"><span class="avatar">${initials(u.nombre)}</span> ${h(u.nombre)}${u.area === 'RET' ? ' <span class="chip ret">RET</span>' : ''}</td>
+          <td>${bar(u.cierres, 'cierres', 'good')}</td><td class="num"><b>${money(u.monto)}</b></td><td>${bar(u.calificados, 'calificados')}</td><td>${bar(u.contactos, 'contactos')}</td>
+          <td class="num">${u.sin_contactar ? `<span class="chip ${u.sin_contactar > 5 ? 'bad' : 'warn'}">${u.sin_contactar}</span>` : '<span class="faint">0</span>'}</td>
+          <td class="num">${u.racha ? `🔥 ${u.racha} d` : '<span class="faint">—</span>'}</td></tr>`).join('') || '<tr><td colspan="8" class="faint">Sin vendedores activos en tus áreas.</td></tr>'}</tbody></table></div>
+      <p class="small faint" style="margin:0">Contactos: llamadas contestadas, WhatsApp y reuniones registradas. Racha: días seguidos con al menos un contacto.</p>`;
   }
 
   // ---------- equipo ----------

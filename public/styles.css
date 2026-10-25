@@ -309,6 +309,19 @@ pre.code { padding: 10px; overflow-x: auto; white-space: pre; }
 .sig-check { width: 56px; height: 56px; border-radius: 50%; background: var(--good-soft); color: var(--good); display: grid; place-items: center; font-size: 26px; font-weight: 800; }
 @media (max-width: 860px) { .sig-actions .btn { flex: 1 1 45%; } .sig-actions #sigSkip { flex-basis: 100%; margin-left: 0; } }
 
+/* ---------- marcador ---------- */
+.mk-bar { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; min-width: 110px; }
+.mk-bar .track { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.mk-bar .fill { height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.mk-bar.good .fill { background: var(--good); }
+.mk table { min-width: 760px; } .mk tr.lead td { background: color-mix(in srgb, var(--good-soft) 60%, transparent); }
+.tile.alert .v { color: var(--warn); }
+body.tv .rail, body.tv .topbar, body.tv .bottomnav, body.tv .filters #mkPer { display: none; }
+body.tv #app { grid-template-columns: 1fr; }
+body.tv .content { padding: 24px 32px; }
+body.tv .mk-tiles .v { font-size: 40px; } body.tv .mk table { font-size: 18px; } body.tv .mk th, body.tv .mk td { padding: 14px 12px; } body.tv .avatar { width: 32px; height: 32px; font-size: 12px; }
+body.tv #tvBtn { position: fixed; top: 12px; right: 12px; z-index: 50; }
+
 /* ---------- drawer / modal / toast ---------- */
 .scrim { position: fixed; inset: 0; background: rgba(10, 16, 22, .45); z-index: 20; }
 .drawer {
