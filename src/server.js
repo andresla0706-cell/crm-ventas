@@ -9,6 +9,7 @@ import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMark
 import { startReparto, repartirLeads } from './reparto.js';
 import { startPrioridad, recalcularPrioridades } from './prioridad.js';
 import { iaConfig, chatZigga, consultarSQL } from './ia.js';
+import { startCoach, generarCoach, coachDeHoy, marcarVisto } from './coach.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, publicUser,
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
@@ -160,6 +161,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     meta: isAdmin(req.user) ? metaStatus(db) : null,
     webhook_configurado: !!WEBHOOK_KEY,
     ia: { activa: iaConfig().activa, modelo: iaConfig().model },
+    coach: coachDeHoy(db, req.user.id),
     server_time: nowIso(),
   });
 });
@@ -246,6 +248,8 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
       Object.assign(sets, stageMarks(config, area, target, lead, now));
       const st = stages.find((s) => s.id === target);
       if (st?.tipo !== 'perdida' && !('motivo_perdida' in sets)) sets.motivo_perdida = null;
+      // Avanzar más allá de la primera etapa implica que hubo contacto.
+      if (st?.tipo !== 'perdida' && stages.findIndex((s) => s.id === target) > 0 && !lead.primer_contacto_en) { sets.primer_contacto_en = now; sets.ultimo_contacto_en = now; sets.sin_respuesta_en = null; }
     }
   }
   // Assignment (admin only)
@@ -385,6 +389,15 @@ app.post('/api/zigga/chat', requireAuth, async (req, res) => {
 // Consulta directa de prueba (solo administrador): útil para verificar el acotamiento.
 app.post('/api/zigga/sql', requireAdmin, (req, res) => {
   try { res.json({ rows: consultarSQL(DB_FILE, db, req.user, req.body?.sql) }); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---------- coach diario ----------
+app.post('/api/coach/generar', requireAdmin, async (_req, res) => {
+  if (!iaConfig().activa) return res.status(503).json({ error: 'Zigga IA no está activado: falta ANTHROPIC_API_KEY en el servidor.' });
+  try { const n = await generarCoach(db, { force: true }); res.json({ generados: n }); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+app.post('/api/coach/:id/visto', requireAuth, (req, res) => {
+  res.json({ ok: marcarVisto(db, req.user.id, Number(req.params.id)) });
 });
 
 // ---------- marcador del equipo ----------
@@ -728,4 +741,5 @@ app.listen(PORT, () => {
   startMetaPolling(db);
   startReparto(db);
   startPrioridad(db);
+  startCoach(db);
 });

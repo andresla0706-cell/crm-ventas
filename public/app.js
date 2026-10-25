@@ -132,7 +132,7 @@
     const snap = JSON.stringify([d.leads, d.tasks, d.users, d.config, d.sin_asignar, d.meta?.ultimo]);
     const changed = snap !== S.lastSnapshot;
     S.lastSnapshot = snap;
-    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado, ia: d.ia });
+    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado, ia: d.ia, coach: d.coach });
     if (!silent || changed) { render(); if (S.openLeadId) refreshDrawer(); }
   }
   async function start() {
@@ -220,6 +220,25 @@
     return [l.nombre, l.whatsapp, l.correo, l.ciudad, countryName(l.pais), l.ad_name, l.campaign_name].some((v) => v && String(v).toLowerCase().includes(q));
   }
 
+  // ---------- coach diario ----------
+  function coachCard() {
+    const c = S.coach; if (!c || c.visto) return '';
+    const dismiss = `<button class="btn ghost icon" id="coachHide" title="Entendido, ocultar">${ICONS.close}</button>`;
+    if (c.tipo === 'vendedor') {
+      return `<div class="coach"><div class="coach-head"><span class="eyebrow">Tu coach para hoy · ${h(fmtD(c.fecha + 'T12:00:00'))}</span>${dismiss}</div>
+        <p class="coach-saludo">${h(c.saludo || '')}</p>
+        <ol class="coach-acciones">${(c.acciones || []).map((a) => `<li>${h(a.texto)}${a.lead_id ? ` <a href="#lead-${a.lead_id}" class="lead-link">ver ficha →</a>` : ''}</li>`).join('')}</ol>
+        ${c.observacion ? `<p class="small muted" style="margin:0">${h(c.observacion)}</p>` : ''}</div>`;
+    }
+    return `<div class="coach"><div class="coach-head"><span class="eyebrow">Informe del equipo · ${h(fmtD(c.fecha + 'T12:00:00'))}</span>${dismiss}</div>
+      <p class="coach-saludo">${h(c.resumen || '')}</p>
+      <div class="two" style="gap:10px">${(c.alertas || []).length ? `<div><div class="eyebrow" style="color:var(--warn)">Alertas</div><ul class="coach-list">${c.alertas.map((x) => `<li>${h(x)}</li>`).join('')}</ul></div>` : ''}
+      ${(c.recomendaciones || []).length ? `<div><div class="eyebrow" style="color:var(--good)">Recomendaciones</div><ul class="coach-list">${c.recomendaciones.map((x) => `<li>${h(x)}</li>`).join('')}</ul></div>` : ''}</div></div>`;
+  }
+  function wireCoach(root) {
+    $('#coachHide', root)?.addEventListener('click', async () => { const id = S.coach?.id; S.coach = null; render(); try { await api('POST', `/api/coach/${id}/visto`); } catch { /* sin importancia */ } });
+  }
+
   // ---------- siguiente ----------
   /** Cola de trabajo de un vendedor: tareas vencidas → próximas acciones vencidas → lo que toca en los próximos 15 min → nuevos sin contactar → programado para más tarde hoy → sin seguimiento. */
   function queueFor(userId) {
@@ -234,7 +253,7 @@
     }
     for (const l of mine) {
       if (l.proxima_fecha) { const d = new Date(l.proxima_fecha); if (d <= endToday) items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: d, bucket: d < now ? 1 : d <= soon ? 2 : 4, label: `${l.proxima_accion || 'Próxima acción'} · ${d < now ? 'vencida' : d <= soon ? 'ahora' : 'más tarde hoy'}` }); continue; }
-      if (!l.primer_contacto_en) { items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: new Date(l.asignado_en || l.lead_creado_en || l.creado_en), bucket: 3, label: 'Nuevo · sin contactar', prio: l.prioridad || 0 }); continue; }
+      if (!l.primer_contacto_en && stage(l).tipo !== 'ganada') { items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: new Date(l.asignado_en || l.lead_creado_en || l.creado_en), bucket: 3, label: 'Nuevo · sin contactar', prio: l.prioridad || 0 }); continue; }
       if (stage(l).tipo !== 'ganada') items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: new Date(l.actualizado_en), bucket: 5, label: 'Sin seguimiento programado' });
     }
     items.sort((a, b) => (S.skipped.has(a.key) - S.skipped.has(b.key)) || (a.bucket - b.bucket) || (a.bucket === 3 ? ((b.prio || 0) - (a.prio || 0)) || (a.when - b.when) : a.when - b.when));
@@ -247,7 +266,7 @@
     const urgentes = items.filter((i) => i.bucket <= 1).length;
     const it = items[0];
     const picker = isAdmin() ? `<select class="input" id="sigUser" style="width:auto">${S.users.filter((u) => u.activo !== false).map((u) => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${u.id === S.user.id ? 'Mi cola' : `Cola de ${h(u.nombre)}`}</option>`).join('')}</select>` : '';
-    const top = `<div class="filters">${picker}<span class="muted small">${items.length} en cola${urgentes ? ` · <b style="color:var(--bad)">${urgentes} vencida${urgentes === 1 ? '' : 's'}</b>` : ''}</span>${S.skipped.size ? `<button class="btn sm ghost" id="sigUnskip">Volver a mostrar ${S.skipped.size} saltado(s)</button>` : ''}</div>`;
+    const top = `${S.coach?.tipo === 'vendedor' ? coachCard() : ''}<div class="filters">${picker}<span class="muted small">${items.length} en cola${urgentes ? ` · <b style="color:var(--bad)">${urgentes} vencida${urgentes === 1 ? '' : 's'}</b>` : ''}</span>${S.skipped.size ? `<button class="btn sm ghost" id="sigUnskip">Volver a mostrar ${S.skipped.size} saltado(s)</button>` : ''}</div>`;
     if (!it) {
       V.innerHTML = `${top}<div class="sig-empty"><div class="sig-check">✓</div><h2>Cola vacía</h2><p class="muted">No hay tareas vencidas, seguimientos para hoy ni leads nuevos sin contactar${isAdmin() && uid !== S.user.id ? ' en esta cola' : ''}.</p></div>`;
       wireSigTop(); return;
@@ -331,6 +350,7 @@
     });
   }
   function wireSigTop() {
+    wireCoach(document);
     $('#sigUser')?.addEventListener('change', (e) => { S.sigUser = Number(e.target.value); S.skipped.clear(); render(); });
     $('#sigUnskip')?.addEventListener('click', () => { S.skipped.clear(); renderSiguiente(); });
   }
@@ -354,7 +374,8 @@
         <div class="col-head ${s.tipo}"><h3>${h(s.nombre)}</h3><span class="chip count">${items.length}</span>${sum ? `<span class="sum muted num">${money(sum)}</span>` : ''}</div>
         <div class="col-body">${items.map(card).join('') || '<div class="empty small">Sin leads</div>'}</div></div>`;
     }).join('');
-    fresh().innerHTML = `${filters}<div class="board" id="board">${cols}</div>`;
+    fresh().innerHTML = `${S.coach?.tipo === 'equipo' ? coachCard() : ''}${filters}<div class="board" id="board">${cols}</div>`;
+    wireCoach(document);
     $('#boardResp')?.addEventListener('change', (e) => { S.boardFilter.responsable = e.target.value; renderTablero(); });
     wireBoard();
   }
@@ -590,7 +611,9 @@
     const V = fresh();
     const per = S.marcadorPeriodo || 'hoy';
     V.innerHTML = `<div class="filters"><div class="seg" id="mkPer">${[['hoy', 'Hoy'], ['semana', 'Semana'], ['mes', 'Mes']].map(([v, t]) => `<button class="${per === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div>
-      <button class="btn sm ghost" id="tvBtn" title="Pantalla completa para TV">⛶ Modo TV</button><span class="muted small" id="mkStamp"></span></div><div id="mkBody" class="muted small">Cargando…</div>`;
+      <button class="btn sm ghost" id="tvBtn" title="Pantalla completa para TV">⛶ Modo TV</button>${isAdmin() && S.ia?.activa ? '<button class="btn sm ghost" id="coachNow" title="Vuelve a generar el coach de hoy para todo el equipo">✦ Generar coach de hoy</button>' : ''}<span class="muted small" id="mkStamp"></span></div>${S.coach?.tipo === 'equipo' ? coachCard() : ''}<div id="mkBody" class="muted small">Cargando…</div>`;
+    wireCoach(document);
+    $('#coachNow') && ($('#coachNow').onclick = async () => { $('#coachNow').disabled = true; try { const r = await api('POST', '/api/coach/generar'); toast(`${r.generados} informe(s) generado(s)`, 'good'); await load(); } catch (e) { fail(e); $('#coachNow').disabled = false; } });
     $('#mkPer').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { S.marcadorPeriodo = b.dataset.v; renderMarcador(); } };
     $('#tvBtn').onclick = () => { document.body.classList.toggle('tv'); if (document.body.classList.contains('tv')) document.documentElement.requestFullscreen?.().catch(() => {}); else document.exitFullscreen?.().catch(() => {}); };
     let d; try { d = await api('GET', `/api/marcador?periodo=${per}`); } catch (e) { fail(e); return; }
