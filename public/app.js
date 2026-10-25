@@ -79,11 +79,17 @@
   }
   const fail = (e) => toast(e.message || String(e), 'bad');
 
+  /** Nombre de la empresa configurado en Ajustes ('' si todavía es el valor por defecto). */
+  function empresaName(cfg = S.config) { const e = (cfg?.empresa || '').trim(); return e && e !== 'CRM Ventas' ? e : ''; }
+
   // ---------- sesión ----------
   function showLogin() {
     clearInterval(S.pollTimer);
     $('#app').hidden = true; $('#login').hidden = false; $('#overlay').innerHTML = '';
     setTimeout(() => $('#loginUser').focus(), 50);
+    fetch('/api/public-config', { credentials: 'same-origin' }).then((r) => r.json()).then((c) => {
+      const e = empresaName(c); $('#loginEmpresa').textContent = e || 'Entrar'; document.title = e ? `Zigga · ${e}` : 'Zigga';
+    }).catch(() => {});
   }
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -142,8 +148,9 @@
 
   function render() {
     if (!S.user) return;
-    $('#brandName').textContent = S.config.empresa || 'CRM Ventas';
-    document.title = S.config.empresa || 'CRM Ventas';
+    const empresa = empresaName();
+    const sub = $('#brandSub'); sub.textContent = empresa; sub.hidden = !empresa;
+    document.title = empresa ? `Zigga · ${empresa}` : 'Zigga';
     $('#meAvatar').textContent = initials(S.user.nombre); $('#meName').textContent = S.user.nombre;
     $('#meRole').textContent = isAdmin() ? 'Administrador' : `Vendedor · ${areaLabel(S.user.area)}`;
     const badges = { tareas: taskBadge(), lista: isAdmin() ? S.sinAsignar : 0 };
@@ -529,7 +536,7 @@
       <div><button class="btn sm" data-add="${area}">+ Agregar etapa</button></div></div>`;
     const V = fresh();
     V.innerHTML = `<div class="stack" style="max-width:900px">
-      <div class="panel"><h2>Empresa</h2><div class="field-grid"><label class="field">Nombre del CRM<input class="input" id="sEmpresa" value="${h(c.empresa)}"></label><label class="field">Moneda<input class="input" id="sMoneda" value="${h(c.moneda)}" maxlength="3"></label></div></div>
+      <div class="panel"><h2>Empresa</h2><div class="field-grid"><label class="field">Nombre de la empresa (se muestra bajo la marca Zigga y en la pantalla de entrada)<input class="input" id="sEmpresa" value="${h(empresaName(c))}" placeholder="Ej. Ventas Capital"></label><label class="field">Moneda<input class="input" id="sMoneda" value="${h(c.moneda)}" maxlength="3"></label></div></div>
       <div class="two"><div class="panel"><h2>Etapas FTD</h2><p class="small muted" style="margin:0">Marca una etapa como <b>Calificado</b> para medir la tasa de calificación, una como <b>Ganada</b> (cliente) y una como <b>Perdida</b>.</p>${stageEditor('FTD')}</div>
       <div class="panel"><h2>Etapas Retención</h2><p class="small muted" style="margin:0">Cuando un lead llega a Cliente en FTD, pásalo a Retención desde su ficha.</p>${stageEditor('RET')}</div></div>
       <div class="panel"><h2>Motivos de pérdida</h2><textarea class="input" id="sMotivos" rows="4">${h((c.motivos_perdida || []).join('\n'))}</textarea><span class="small muted">Uno por línea.</span></div>

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>CRM Ventas</title>
+<title>Zigga</title>
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <link rel="stylesheet" href="/styles.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e6b8a'/%3E%3Cpath d='M8 22V10h4l4 7 4-7h4v12h-3.5v-7l-4.5 7-4.5-7v7z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e6b8a'/%3E%3Cpath d='M9 9h14v3.2L14.6 20H23v3H9v-3.2L17.4 12H9z' fill='%23fff'/%3E%3C/svg%3E">
 <script>
   try {
     var t = localStorage.getItem('crm_theme');
@@ -20,21 +20,22 @@
 <body>
 <div id="login" hidden>
   <form class="login-card" id="loginForm" autocomplete="on">
-    <div class="brand"><span class="mark">V</span><span id="loginBrand">CRM Ventas</span></div>
+    <div class="brand"><span class="mark">Z</span><span>Zigga</span></div>
     <div>
-      <h1>Entrar</h1>
-      <p class="muted" style="margin:4px 0 0">Usa el usuario y la contraseña que te dio el administrador.</p>
+      <h1 id="loginEmpresa">Entrar</h1>
+      <p class="muted" style="margin:4px 0 0">Sigue cada lead hasta cerrarlo.</p>
     </div>
     <label class="field">Usuario<input class="input" id="loginUser" name="username" autocomplete="username" autocapitalize="off" required></label>
     <label class="field">Contraseña<input class="input" id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
     <div id="loginError" class="small" style="color:var(--bad);min-height:18px;font-weight:600"></div>
     <button class="btn primary" type="submit" id="loginBtn">Entrar</button>
+    <div class="small faint" style="text-align:center">Zigga · by DataLab Ads</div>
   </form>
 </div>
 
 <div id="app" hidden>
   <aside class="rail">
-    <div class="brand"><span class="mark">V</span><span id="brandName">CRM Ventas</span></div>
+    <div class="brand"><span class="mark">Z</span><div class="brandtext"><span>Zigga</span><span class="eyebrow" id="brandSub" hidden></span></div></div>
     <nav id="nav"></nav>
     <div class="spacer"></div>
     <div class="me">

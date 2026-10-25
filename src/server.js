@@ -92,6 +92,12 @@ function bootstrapAdmin() {
   console.log(`[crm] Administrador creado: usuario "${username}"${process.env.ADMIN_PASSWORD ? '' : ' con la contraseña por defecto (cámbiala al entrar)'}.`);
 }
 
+// ---------- público ----------
+app.get('/api/public-config', (_req, res) => {
+  const c = getConfig(db);
+  res.json({ empresa: c.empresa || '', producto: 'Zigga' });
+});
+
 // ---------- auth ----------
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body || {};

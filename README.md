@@ -1,6 +1,6 @@
-# CRM Ventas
+# Zigga
 
-CRM para un equipo de ventas con dos áreas (FTD y Retención): tablero kanban por etapas, lista con filtros, ficha por lead con historial, tareas y recordatorios, métricas, equipo con roles (administrador / vendedor) y entrada de leads desde Meta Lead Ads (archivo de export, sincronización automática con el Graph API o webhook).
+Zigga es un CRM para un equipo de ventas con dos áreas (FTD y Retención): tablero kanban por etapas, lista con filtros, ficha por lead con historial, tareas y recordatorios, métricas, equipo con roles (administrador / vendedor) y entrada de leads desde Meta Lead Ads (archivo de export, sincronización automática con el Graph API o webhook).
 
 Sin dependencias externas de base de datos: Node 22 + Express + SQLite (módulo `node:sqlite`). Todo vive en un archivo dentro de `DATA_DIR`.
 
