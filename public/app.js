@@ -67,6 +67,13 @@
     const lim = S.config?.reparto?.reasignar_minutos || 15;
     return `<span class="chip ${m >= 60 ? 'bad' : m >= lim ? 'warn' : ''}" title="Tiempo sin primer contacto">⏱ ${fmtMin(m)}</span>`;
   };
+  /** Chip de prioridad (solo para leads aún sin contactar). */
+  const prioChip = (l, withLabel = false) => {
+    if (l.prioridad == null || l.primer_contacto_en || l.sin_respuesta_en || stage(l).tipo !== 'abierta') return '';
+    const p = Math.round(l.prioridad); const cls = p >= 70 ? 'prio-high' : p >= 40 ? 'prio-mid' : 'prio-low';
+    const tip = (l.prioridad_detalle || []).join('\n');
+    return `<span class="chip ${cls}" title="${h(tip)}">${withLabel ? 'Prioridad ' : 'P'} ${p}</span>`;
+  };
   const userById = (id) => S.users.find((u) => u.id === id);
   const uname = (id) => (id == null ? 'Sin asignar' : userById(id)?.nombre || 'Usuario');
   const stages = (area) => S.config?.etapas?.[area] || [];
@@ -254,7 +261,8 @@
       <div class="sig-card" data-key="${it.key}">
         <div class="sig-head">
           <span class="chip ${reasonClass}">${h(it.label)} · ${reasonTime}</span>
-          <span class="faint small">${items.length > 1 ? `${items.length - 1} más en cola` : 'último de la cola'}</span>
+          ${l ? prioChip(l, true) : ''}${l && prioChip(l) ? '<button class="btn ghost sm" id="sigWhy">¿Por qué?</button>' : ''}
+          <span class="faint small" style="margin-left:auto">${items.length > 1 ? `${items.length - 1} más en cola` : 'último de la cola'}</span>
         </div>
         ${it.kind === 'task' ? `<div class="sig-task"><label class="check"><input type="checkbox" id="sigTaskDone"> <b>${h(it.task.titulo)}</b></label><span class="small muted">${fmtDT(it.task.fecha)}</span></div>` : ''}
         ${l ? `
@@ -292,6 +300,7 @@
     $('#sigTaskDone')?.addEventListener('change', async () => { try { await api('PATCH', `/api/tasks/${it.task.id}`, { hecho: true }); toast('Tarea completada ✓', 'good'); await load(); } catch (e) { fail(e); } });
     if (!l) return;
     $('#sigFicha').onclick = () => openLead(l.id);
+    $('#sigWhy') && ($('#sigWhy').onclick = () => modal(`<h2>Prioridad ${Math.round(l.prioridad)}</h2><p class="muted small">Cómo se arma el puntaje de ${h(l.nombre)}:</p><ul class="small" style="margin:0;padding-left:18px;display:grid;gap:4px">${(l.prioridad_detalle || []).map((x) => `<li>${h(x)}</li>`).join('')}</ul><div class="actions"><button class="btn" data-close>Cerrar</button></div>`));
     V.addEventListener('click', async (e) => { const c = e.target.closest('[data-copy]'); if (c) { try { await navigator.clipboard.writeText(c.dataset.copy); toast('Número copiado'); } catch { toast(c.dataset.copy); } } });
     api('GET', `/api/leads/${l.id}/activities`).then((d) => { const tl = $('#sigHist'); if (!tl) return; const acts = d.activities.slice(0, 4); tl.innerHTML = acts.length ? acts.map((a) => `<div class="tl"><div class="dot ${a.tipo}">•</div><div><div class="txt">${h(a.texto)}</div><div class="when">${fmtDT(a.en)} · ${h(a.usuario || 'Sistema')}</div></div></div>`).join('') : '<div class="faint small">Sin movimientos todavía.</div>'; }).catch(() => {});
     const send = async (tipo, fecha) => {
@@ -354,7 +363,7 @@
     return `<div class="card" draggable="true" data-id="${l.id}">
       <div class="top"><span class="name">${h(l.nombre)}</span>${l.monto != null ? `<span class="num small"><b>${money(l.monto)}</b></span>` : ''}</div>
       <div class="small muted">${flag(l.pais)} ${h([countryName(l.pais), l.ciudad].filter(Boolean).join(' · ')) || '<span class="faint">Sin ubicación</span>'}</div>
-      <div class="bottom">${r ? `<span class="avatar" title="${h(r.nombre)}">${initials(r.nombre)}</span>` : '<span class="avatar none" title="Sin asignar">—</span>'}${due || timerChip(l)}<span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span></div>
+      <div class="bottom">${r ? `<span class="avatar" title="${h(r.nombre)}">${initials(r.nombre)}</span>` : '<span class="avatar none" title="Sin asignar">—</span>'}${prioChip(l)}${due || timerChip(l)}<span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span></div>
       ${l.ad_name || l.origen_tipo === 'manual' ? `<div class="src">${h(l.ad_name ? `${l.ad_name}` : 'Creado manualmente')}</div>` : ''}
     </div>`;
   }
@@ -434,7 +443,7 @@
           ${th('nombre', 'Nombre')}<th>Contacto</th>${th('pais', 'País')}${th('etapa', 'Etapa')}${th('responsable', 'Responsable')}${th('monto', 'Monto')}${th('proxima', 'Próxima acción')}<th>Origen</th>${th('creado', 'Creado')}</tr></thead>
         <tbody>${leads.map((l) => `<tr class="row" data-id="${l.id}">
           ${selectable ? `<td><input type="checkbox" class="selOne" data-id="${l.id}" ${sel.has(l.id) ? 'checked' : ''}></td>` : ''}
-          <td class="name">${h(l.nombre)}${l.ciudad ? `<div class="sub">${h(l.ciudad)}</div>` : ''}</td>
+          <td class="name">${h(l.nombre)} ${prioChip(l)}${l.ciudad ? `<div class="sub">${h(l.ciudad)}</div>` : ''}</td>
           <td><div class="num small">${h(l.whatsapp || '')}</div><div class="sub">${h(l.correo || '')}</div></td>
           <td>${flag(l.pais)} ${h(countryName(l.pais))}</td>
           <td><span class="chip ${stage(l).tipo === 'ganada' ? 'good' : stage(l).tipo === 'perdida' ? 'bad' : stage(l).tipo === 'calificado' ? 'accent' : ''}">${h(stage(l).nombre)}</span></td>
@@ -727,8 +736,24 @@
           <label class="check"><input type="checkbox" id="sRepActivo" ${c.reparto.activo ? 'checked' : ''}> Activar reparto por turnos</label>
           <div class="field-grid"><label class="field">Tope diario por vendedor (0 = sin tope)<input class="input num" id="sTope" type="number" min="0" max="1000" value="${c.reparto.tope_diario}"></label><label class="field">Reasignar si no lo tocan en (minutos, 0 = nunca)<input class="input num" id="sReasignar" type="number" min="0" max="1440" value="${c.reparto.reasignar_minutos}"></label></div></div>
       </div>
+      <div class="panel"><h2>Prioridad automática</h2>
+        <p class="small muted" style="margin:0">Cada lead nuevo recibe un puntaje de 0 a 100 que ordena la cola del Modo Siguiente: <b>formulario</b> (tus reglas, tope abajo) + <b>historial</b> (cómo cerraron leads parecidos por anuncio, país y capital; neutro mientras no haya datos) + <b>frescura</b> (baja con las horas) − <b>señales</b> (número incompleto, correo dudoso).</p>
+        <div class="field-grid">
+          <label class="field">Tope de puntos del formulario<input class="input num" id="pMaxReglas" type="number" min="0" max="100" value="${c.prioridad.max_reglas}"></label>
+          <label class="field">Peso del historial<input class="input num" id="pHist" type="number" min="0" max="100" value="${c.prioridad.peso_historial}"></label>
+          <label class="field">Peso de la frescura<input class="input num" id="pFresc" type="number" min="0" max="100" value="${c.prioridad.peso_frescura}"></label>
+          <label class="field">La frescura llega a 0 a las (horas)<input class="input num" id="pHoras" type="number" min="1" max="240" value="${c.prioridad.horas_frescura}"></label>
+        </div>
+        <div class="eyebrow">Reglas del formulario</div>
+        <div class="stack" style="gap:6px" id="pReglas">${c.prioridad.reglas.map((r) => `<div class="rule-row"><input class="input" data-f="pregunta" value="${h(r.pregunta)}" placeholder="la pregunta contiene…"><input class="input" data-f="valor" value="${h(r.valor)}" placeholder="la respuesta contiene…"><input class="input num" data-f="puntos" type="number" value="${r.puntos}"><button class="btn ghost icon" data-rm title="Quitar">${ICONS.close}</button></div>`).join('')}
+          <div><button class="btn sm" id="pAddRule">+ Agregar regla</button> <button class="btn sm ghost" id="pRecalc">Recalcular prioridades ahora</button></div></div>
+        <p class="small faint" style="margin:0">Se compara sin tildes ni mayúsculas. Ejemplo: pregunta "capital", respuesta "más de $50,000", 50 puntos.</p>
+      </div>
       <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div></div>`;
+    $('#pAddRule').onclick = () => { const list = $('#pReglas'); const div = document.createElement('div'); div.className = 'rule-row'; div.innerHTML = `<input class="input" data-f="pregunta" placeholder="la pregunta contiene…"><input class="input" data-f="valor" placeholder="la respuesta contiene…"><input class="input num" data-f="puntos" type="number" value="10"><button class="btn ghost icon" data-rm title="Quitar">${ICONS.close}</button>`; list.insertBefore(div, list.lastElementChild); div.querySelector('input').focus(); };
+    $('#pRecalc').onclick = async () => { try { const r = await api('POST', '/api/prioridad/recalcular'); toast(`${r.recalculados} lead(s) recalculado(s)`, 'good'); await load(); } catch (e) { fail(e); } };
     V.addEventListener('click', (e) => {
+      const rr = e.target.closest('.rule-row'); if (rr && e.target.closest('[data-rm]')) { rr.remove(); return; }
       const row = e.target.closest('.stage-row'); const add = e.target.closest('[data-add]');
       if (add) { const list = $(`#st_${add.dataset.add}`); const div = document.createElement('div'); div.className = 'stage-row'; div.innerHTML = `<input class="input" value="" data-f="nombre" placeholder="Nombre de la etapa"><select class="input" data-f="tipo"><option value="abierta">Abierta</option><option value="calificado">Calificado</option><option value="ganada">Ganada</option><option value="perdida">Perdida</option></select><div class="ops"><button class="btn ghost icon" data-up>↑</button><button class="btn ghost icon" data-down>↓</button><button class="btn ghost icon" data-rm>${ICONS.close}</button></div>`; list.insertBefore(div, list.lastElementChild); div.querySelector('input').focus(); return; }
       if (!row) return;
@@ -740,7 +765,8 @@
       const read = (area) => $$(`#st_${area} .stage-row`).map((r, i) => ({ id: c.etapas[area][Number(r.dataset.i)]?.id || undefined, nombre: r.querySelector('[data-f=nombre]').value, tipo: r.querySelector('[data-f=tipo]').value }));
       try {
         await api('PUT', '/api/settings', { empresa: $('#sEmpresa').value, moneda: $('#sMoneda').value.toUpperCase(), motivos_perdida: $('#sMotivos').value.split('\n'), etapas: { FTD: read('FTD'), RET: read('RET') },
-          siguiente: { reintento_minutos: $('#sReintento').value, max_intentos: $('#sMaxInt').value }, reparto: { activo: $('#sRepActivo').checked, tope_diario: $('#sTope').value, reasignar_minutos: $('#sReasignar').value } });
+          siguiente: { reintento_minutos: $('#sReintento').value, max_intentos: $('#sMaxInt').value }, reparto: { activo: $('#sRepActivo').checked, tope_diario: $('#sTope').value, reasignar_minutos: $('#sReasignar').value },
+          prioridad: { max_reglas: $('#pMaxReglas').value, peso_historial: $('#pHist').value, peso_frescura: $('#pFresc').value, horas_frescura: $('#pHoras').value, reglas: $$('#pReglas .rule-row').map((r) => ({ pregunta: r.querySelector('[data-f=pregunta]').value, valor: r.querySelector('[data-f=valor]').value, puntos: r.querySelector('[data-f=puntos]').value })) } });
         toast('Ajustes guardados', 'good'); await load();
       } catch (e) { fail(e); }
     };

@@ -26,6 +26,15 @@ export const DEFAULT_SETTINGS = {
   motivos_perdida: ['No contesta', 'Sin presupuesto', 'No le interesa', 'Datos falsos', 'Número inválido', 'Otro'],
   siguiente: { reintento_minutos: 120, max_intentos: 3 },
   reparto: { activo: false, tope_diario: 0, reasignar_minutos: 15 },
+  prioridad: {
+    max_reglas: 50, peso_historial: 30, peso_frescura: 20, horas_frescura: 10,
+    reglas: [
+      { pregunta: 'capital', valor: 'más de $50,000', puntos: 50 },
+      { pregunta: 'capital', valor: '$10,000-$50,000', puntos: 35 },
+      { pregunta: 'capital', valor: 'menos de $10,000', puntos: 15 },
+      { pregunta: 'proceso legal', valor: 'no', puntos: 5 },
+    ],
+  },
 };
 
 export function openDb(file) {
@@ -133,6 +142,7 @@ function migrate(db) {
   add('ultimo_toque_en', 'TEXT');
   add('reasignaciones', 'INTEGER NOT NULL DEFAULT 0');
   add('prioridad', 'REAL');
+  add('prioridad_detalle', 'TEXT');
 }
 
 export function nowIso() {
@@ -161,6 +171,7 @@ export function getConfig(db) {
   merged.etapas = { ...DEFAULT_SETTINGS.etapas, ...(saved.etapas || {}) };
   merged.siguiente = { ...DEFAULT_SETTINGS.siguiente, ...(saved.siguiente || {}) };
   merged.reparto = { ...DEFAULT_SETTINGS.reparto, ...(saved.reparto || {}) };
+  merged.prioridad = { ...DEFAULT_SETTINGS.prioridad, ...(saved.prioridad || {}) };
   return merged;
 }
 
@@ -168,6 +179,7 @@ export function rowToLead(row) {
   if (!row) return null;
   const lead = { ...row };
   try { lead.respuestas = row.respuestas ? JSON.parse(row.respuestas) : {}; } catch { lead.respuestas = {}; }
+  try { lead.prioridad_detalle = row.prioridad_detalle ? JSON.parse(row.prioridad_detalle) : null; } catch { lead.prioridad_detalle = null; }
   lead.evento_meta_enviado = !!row.evento_meta_enviado;
   return lead;
 }

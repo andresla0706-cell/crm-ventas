@@ -1,5 +1,6 @@
 import { getConfig, getSetting, setSetting, nowIso } from './db.js';
 import { repartirLeads } from './reparto.js';
+import { recalcularPrioridades } from './prioridad.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -136,6 +137,7 @@ export function insertNewLeads(db, leads, { origen, userId }) {
   }
   let repartidos = 0;
   if (ids.length) {
+    try { recalcularPrioridades(db, ids); } catch (e) { console.warn('[prioridad]', e.message); }
     try { repartidos = repartirLeads(db, ids); } catch (e) { console.warn('[reparto]', e.message); }
   }
   return { nuevos, repetidos, invalidos, ids, repartidos };

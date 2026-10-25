@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, findStage, forwardStage, DEFAULT_SETTINGS } from './db.js';
 import { startReparto, repartirLeads } from './reparto.js';
+import { startPrioridad, recalcularPrioridades } from './prioridad.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, publicUser,
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
@@ -196,6 +197,7 @@ app.post('/api/leads', requireAuth, (req, res) => {
   if (responsable_id) act(id, 'asignacion', `Asignado a ${userName(responsable_id)}`, req.user.id, null, userName(responsable_id));
   const marks = stageMarks(config, area, etapa, {}, now);
   if (Object.keys(marks).length) applyMarks(id, marks);
+  try { recalcularPrioridades(db, [id]); } catch (e) { console.warn('[prioridad]', e.message); }
   res.status(201).json({ lead: rowToLead(q.leadById.get(id)) });
 });
 
@@ -545,6 +547,14 @@ app.put('/api/settings', requireAdmin, (req, res) => {
   if (Array.isArray(b.motivos_perdida)) next.motivos_perdida = b.motivos_perdida.map((m) => str(m, 80)).filter(Boolean).slice(0, 40);
   const int = (v, min, max, def) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
   if (b.siguiente && typeof b.siguiente === 'object') next.siguiente = { reintento_minutos: int(b.siguiente.reintento_minutos, 5, 1440, current.siguiente.reintento_minutos), max_intentos: int(b.siguiente.max_intentos, 1, 10, current.siguiente.max_intentos) };
+  if (b.prioridad && typeof b.prioridad === 'object') {
+    const pr = b.prioridad;
+    next.prioridad = {
+      max_reglas: int(pr.max_reglas, 0, 100, current.prioridad.max_reglas), peso_historial: int(pr.peso_historial, 0, 100, current.prioridad.peso_historial),
+      peso_frescura: int(pr.peso_frescura, 0, 100, current.prioridad.peso_frescura), horas_frescura: int(pr.horas_frescura, 1, 240, current.prioridad.horas_frescura),
+      reglas: Array.isArray(pr.reglas) ? pr.reglas.map((r) => ({ pregunta: str(r?.pregunta, 80), valor: str(r?.valor, 80), puntos: int(r?.puntos, -100, 100, 0) })).filter((r) => r.pregunta && r.valor).slice(0, 60) : current.prioridad.reglas,
+    };
+  }
   if (b.reparto && typeof b.reparto === 'object') next.reparto = { activo: !!b.reparto.activo, tope_diario: int(b.reparto.tope_diario, 0, 1000, current.reparto.tope_diario), reasignar_minutos: int(b.reparto.reasignar_minutos, 0, 1440, current.reparto.reasignar_minutos) };
   if (b.etapas && typeof b.etapas === 'object') {
     for (const area of ['FTD', 'RET']) {
@@ -569,7 +579,13 @@ app.put('/api/settings', requireAdmin, (req, res) => {
     }
   }
   setSetting(db, 'config', next);
+  if (b.prioridad) { try { recalcularPrioridades(db); } catch (e) { console.warn('[prioridad]', e.message); } }
   res.json({ config: getConfig(db) });
+});
+
+app.post('/api/prioridad/recalcular', requireAdmin, (_req, res) => {
+  const n = recalcularPrioridades(db);
+  res.json({ recalculados: n });
 });
 
 function slug(s) {
@@ -686,4 +702,5 @@ app.listen(PORT, () => {
   console.log(`[crm] Escuchando en puerto ${PORT} · base de datos en ${DB_FILE}`);
   startMetaPolling(db);
   startReparto(db);
+  startPrioridad(db);
 });
