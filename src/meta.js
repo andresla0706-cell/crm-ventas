@@ -1,4 +1,5 @@
 import { getConfig, getSetting, setSetting, nowIso } from './db.js';
+import { repartirLeads } from './reparto.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -133,7 +134,11 @@ export function insertNewLeads(db, leads, { origen, userId }) {
     db.exec('ROLLBACK');
     throw e;
   }
-  return { nuevos, repetidos, invalidos, ids };
+  let repartidos = 0;
+  if (ids.length) {
+    try { repartidos = repartirLeads(db, ids); } catch (e) { console.warn('[reparto]', e.message); }
+  }
+  return { nuevos, repetidos, invalidos, ids, repartidos };
 }
 
 export function metaConfig() {

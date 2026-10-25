@@ -7,5 +7,6 @@ COPY src ./src
 COPY public ./public
 ENV PORT=3000
 ENV DATA_DIR=/data
+ENV TZ=America/Bogota
 EXPOSE 3000
 CMD ["node", "--disable-warning=ExperimentalWarning", "src/server.js"]

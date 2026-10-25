@@ -5,7 +5,7 @@
   // ---------- estado ----------
   const S = {
     user: null, config: null, users: [], leads: [], tasks: [], sinAsignar: 0, meta: null, webhook: false,
-    view: 'tablero', area: 'FTD', q: '', listFilters: { etapa: '', responsable: '', origen: '', sort: 'creado', dir: 'desc' },
+    view: 'tablero', area: 'FTD', q: '', listFilters: { etapa: '', responsable: '', origen: '', contacto: '', sort: 'creado', dir: 'desc' }, sigUser: null, skipped: new Set(),
     boardFilter: { responsable: '' }, metricFilters: { periodo: '30', area: 'FTD', responsable: '' },
     openLeadId: null, activities: [], selected: new Set(), pollTimer: null, lastSnapshot: '',
   };
@@ -14,6 +14,7 @@
   const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const ICONS = {
+    siguiente: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
     tablero: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="4" height="8" rx="1"/></svg>',
     lista: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
     tareas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -56,6 +57,15 @@
     return d.toDateString() === now.toDateString() ? 'today' : '';
   };
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+  /** Minutos sin primer contacto desde que llegó o se asignó el lead; null si ya fue contactado. */
+  const minSinContacto = (l) => (l.primer_contacto_en ? null : Math.max(0, Math.round((Date.now() - new Date(l.asignado_en || l.lead_creado_en || l.creado_en).getTime()) / 60000)));
+  const fmtMin = (m) => (m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h` : `${Math.floor(m / 1440)} d`);
+  const timerChip = (l) => {
+    if (l.sin_respuesta_en) return '<span class="chip bad" title="Sin respuesta tras varios intentos">Sin respuesta</span>';
+    const m = minSinContacto(l); if (m == null || stage(l).tipo === 'perdida') return '';
+    const lim = S.config?.reparto?.reasignar_minutos || 15;
+    return `<span class="chip ${m >= 60 ? 'bad' : m >= lim ? 'warn' : ''}" title="Tiempo sin primer contacto">⏱ ${fmtMin(m)}</span>`;
+  };
   const userById = (id) => S.users.find((u) => u.id === id);
   const uname = (id) => (id == null ? 'Sin asignar' : userById(id)?.nombre || 'Usuario');
   const stages = (area) => S.config?.etapas?.[area] || [];
@@ -120,7 +130,7 @@
     await load();
     $('#login').hidden = true; $('#app').hidden = false;
     if (!bothAreas()) { S.area = myAreas()[0] || 'FTD'; S.metricFilters.area = S.area; }
-    if (!location.hash) location.hash = '#tablero';
+    if (!location.hash) location.hash = isAdmin() ? '#tablero' : '#siguiente';
     route();
     clearInterval(S.pollTimer);
     S.pollTimer = setInterval(() => { if (document.visibilityState === 'visible') load(true).catch(() => {}); }, 45000);
@@ -129,6 +139,7 @@
 
   // ---------- navegación ----------
   const VIEWS = [
+    { id: 'siguiente', label: 'Siguiente', admin: false },
     { id: 'tablero', label: 'Tablero', admin: false }, { id: 'lista', label: 'Lista', admin: false }, { id: 'tareas', label: 'Tareas', admin: false },
     { id: 'metricas', label: 'Métricas', admin: false }, { id: 'equipo', label: 'Equipo', admin: true }, { id: 'importar', label: 'Importar', admin: true },
     { id: 'ajustes', label: 'Ajustes', admin: true }, { id: 'cuenta', label: 'Mi cuenta', admin: false },
@@ -158,14 +169,14 @@
     document.title = empresa ? `Zigga · ${empresa}` : 'Zigga';
     $('#meAvatar').textContent = initials(S.user.nombre); $('#meName').textContent = S.user.nombre;
     $('#meRole').textContent = `${isAdmin() ? 'Administrador' : 'Vendedor'}${bothAreas() ? '' : ` · ${areaLabel(S.user.area)}`}`;
-    const badges = { tareas: taskBadge(), lista: isAdmin() ? S.sinAsignar : 0 };
+    const badges = { tareas: taskBadge(), lista: isAdmin() ? S.sinAsignar : 0, siguiente: queueFor(S.sigUser || S.user.id).filter((i) => i.bucket <= 2).length };
     const nav = VIEWS.filter((v) => !v.admin || isAdmin());
     $('#nav').innerHTML = nav.map((v) => `<button class="navitem ${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}" title="${v.id === 'lista' ? 'Leads sin asignar' : 'Tareas vencidas o para hoy'}">${badges[v.id]}</span>` : ''}</button>`).join('');
-    const mobile = nav.filter((v) => ['tablero', 'lista', 'tareas', 'metricas'].includes(v.id));
+    const mobile = nav.filter((v) => ['siguiente', 'tablero', 'lista', 'tareas', 'metricas'].includes(v.id));
     $('#bottomnav').innerHTML = mobile.map((v) => `<button class="${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}">${badges[v.id]}</span>` : ''}</button>`).join('')
       + `<button class="${['equipo', 'importar', 'ajustes', 'cuenta'].includes(S.view) ? 'on' : ''}" data-more="1">${ICONS.ajustes}<span>Más</span></button>`;
     if (document.activeElement?.id !== 'q') renderTopbar();
-    const r = { tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
+    const r = { siguiente: renderSiguiente, tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
     r();
   }
   /** Reemplaza el contenido de la vista por un nodo nuevo (así no se acumulan listeners). */
@@ -180,7 +191,7 @@
   }
 
   function renderTopbar() {
-    const titles = { tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
+    const titles = { siguiente: 'Siguiente', tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
     const showArea = ['tablero', 'lista'].includes(S.view) && bothAreas();
     const showSearch = ['tablero', 'lista'].includes(S.view);
     $('#topbar').innerHTML = `
@@ -198,6 +209,119 @@
     if (!S.q) return true;
     const q = S.q.toLowerCase();
     return [l.nombre, l.whatsapp, l.correo, l.ciudad, countryName(l.pais), l.ad_name, l.campaign_name].some((v) => v && String(v).toLowerCase().includes(q));
+  }
+
+  // ---------- siguiente ----------
+  /** Cola de trabajo de un vendedor: tareas vencidas → próximas acciones vencidas → lo que toca en los próximos 15 min → nuevos sin contactar → programado para más tarde hoy → sin seguimiento. */
+  function queueFor(userId) {
+    const now = new Date(); const endToday = new Date(); endToday.setHours(23, 59, 59, 999); const soon = new Date(now.getTime() + 15 * 60000);
+    const mine = S.leads.filter((l) => l.responsable_id === userId && stage(l).tipo !== 'perdida' && !l.sin_respuesta_en);
+    const mineIds = new Set(mine.map((l) => l.id));
+    const items = [];
+    for (const t of S.tasks) {
+      if (t.hecho || !(t.asignado_id === userId || mineIds.has(t.lead_id))) continue;
+      const d = new Date(t.fecha); if (d > endToday) continue;
+      items.push({ key: `t${t.id}`, kind: 'task', task: t, lead: S.leads.find((l) => l.id === t.lead_id) || null, when: d, bucket: d < now ? 0 : d <= soon ? 2 : 4, label: d < now ? 'Tarea vencida' : d <= soon ? 'Tarea · ahora' : 'Tarea · más tarde hoy' });
+    }
+    for (const l of mine) {
+      if (l.proxima_fecha) { const d = new Date(l.proxima_fecha); if (d <= endToday) items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: d, bucket: d < now ? 1 : d <= soon ? 2 : 4, label: `${l.proxima_accion || 'Próxima acción'} · ${d < now ? 'vencida' : d <= soon ? 'ahora' : 'más tarde hoy'}` }); continue; }
+      if (!l.primer_contacto_en) { items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: new Date(l.asignado_en || l.lead_creado_en || l.creado_en), bucket: 3, label: 'Nuevo · sin contactar', prio: l.prioridad || 0 }); continue; }
+      if (stage(l).tipo !== 'ganada') items.push({ key: `l${l.id}`, kind: 'lead', lead: l, when: new Date(l.actualizado_en), bucket: 5, label: 'Sin seguimiento programado' });
+    }
+    items.sort((a, b) => (S.skipped.has(a.key) - S.skipped.has(b.key)) || (a.bucket - b.bucket) || (a.bucket === 3 ? ((b.prio || 0) - (a.prio || 0)) || (a.when - b.when) : a.when - b.when));
+    return items;
+  }
+  function renderSiguiente() {
+    const V = fresh();
+    const uid = S.sigUser || S.user.id;
+    const items = queueFor(uid);
+    const urgentes = items.filter((i) => i.bucket <= 1).length;
+    const it = items[0];
+    const picker = isAdmin() ? `<select class="input" id="sigUser" style="width:auto">${S.users.filter((u) => u.activo !== false).map((u) => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${u.id === S.user.id ? 'Mi cola' : `Cola de ${h(u.nombre)}`}</option>`).join('')}</select>` : '';
+    const top = `<div class="filters">${picker}<span class="muted small">${items.length} en cola${urgentes ? ` · <b style="color:var(--bad)">${urgentes} vencida${urgentes === 1 ? '' : 's'}</b>` : ''}</span>${S.skipped.size ? `<button class="btn sm ghost" id="sigUnskip">Volver a mostrar ${S.skipped.size} saltado(s)</button>` : ''}</div>`;
+    if (!it) {
+      V.innerHTML = `${top}<div class="sig-empty"><div class="sig-check">✓</div><h2>Cola vacía</h2><p class="muted">No hay tareas vencidas, seguimientos para hoy ni leads nuevos sin contactar${isAdmin() && uid !== S.user.id ? ' en esta cola' : ''}.</p></div>`;
+      wireSigTop(); return;
+    }
+    const l = it.lead;
+    const st = l ? stage(l) : null;
+    const wa = l?.whatsapp ? l.whatsapp.replace(/\D/g, '') : '';
+    const resp = l ? Object.entries(l.respuestas || {}).slice(0, 4) : [];
+    const reasonClass = it.bucket <= 1 ? 'bad' : it.bucket === 2 ? 'warn' : it.bucket === 3 ? 'accent' : '';
+    const reasonTime = it.bucket === 3 ? `⏱ ${fmtMin(minSinContacto(l) || 0)} sin contacto` : it.bucket <= 4 ? fmtDT(it.when.toISOString()) : ago(it.when.toISOString());
+    V.innerHTML = `${top}
+      <div class="sig-card" data-key="${it.key}">
+        <div class="sig-head">
+          <span class="chip ${reasonClass}">${h(it.label)} · ${reasonTime}</span>
+          <span class="faint small">${items.length > 1 ? `${items.length - 1} más en cola` : 'último de la cola'}</span>
+        </div>
+        ${it.kind === 'task' ? `<div class="sig-task"><label class="check"><input type="checkbox" id="sigTaskDone"> <b>${h(it.task.titulo)}</b></label><span class="small muted">${fmtDT(it.task.fecha)}</span></div>` : ''}
+        ${l ? `
+        <div class="sig-lead">
+          <div><h2 class="sig-name">${h(l.nombre)}</h2>
+            <div class="muted">${flag(l.pais)} ${h([countryName(l.pais), l.ciudad].filter(Boolean).join(' · ')) || 'Sin ubicación'}${l.monto != null ? ` · <b class="num">${money(l.monto)}</b>` : ''} · <span class="chip ${l.area === 'RET' ? 'ret' : ''}">${areaLabel(l.area)}</span> <span class="chip">${h(st.nombre)}</span>${l.intentos ? ` <span class="chip warn">${l.intentos} intento${l.intentos === 1 ? '' : 's'} sin respuesta</span>` : ''}</div></div>
+          <div class="contact">
+            ${wa ? `<a class="btn primary" href="https://wa.me/${wa}" target="_blank" rel="noopener">${ICONS.wa} WhatsApp</a><a class="btn" href="tel:${h(l.whatsapp)}">Llamar</a><button class="btn" data-copy="${h(l.whatsapp)}">Copiar</button>` : '<span class="faint small">Sin número</span>'}
+            <button class="btn ghost" id="sigFicha">Ver ficha completa</button>
+          </div>
+          <div class="sig-grid">
+            ${resp.length ? `<div><div class="eyebrow">Respuestas del formulario</div><dl class="kv">${resp.map(([k, v]) => `<dt>${h(k)}</dt><dd><b>${h(v)}</b></dd>`).join('')}</dl></div>` : ''}
+            <div><div class="eyebrow">Contexto</div><dl class="kv">
+              ${l.ad_name ? `<dt>Anuncio</dt><dd>${h(l.ad_name)}</dd>` : ''}${l.campaign_name ? `<dt>Campaña</dt><dd>${h(l.campaign_name)}</dd>` : ''}
+              <dt>Llegó</dt><dd>${fmtDT(l.lead_creado_en || l.creado_en)}</dd>
+              ${l.proxima_accion && it.kind !== 'task' ? `<dt>Pendiente</dt><dd>${h(l.proxima_accion)}${l.proxima_fecha ? ` · ${fmtDT(l.proxima_fecha)}` : ''}</dd>` : ''}
+              ${l.notas ? `<dt>Notas</dt><dd>${h(l.notas)}</dd>` : ''}</dl></div>
+          </div>
+          <div class="eyebrow">Últimos movimientos</div>
+          <div class="timeline sig-hist" id="sigHist"><div class="faint small">Cargando…</div></div>
+          <textarea class="input" id="sigNota" rows="2" placeholder="Nota rápida de esta llamada (opcional). Se guarda con el resultado."></textarea>
+          <div class="sig-actions">
+            <button class="btn" data-res="no_contesto">No contestó</button>
+            <button class="btn" data-res="volver">Volver a llamar</button>
+            <button class="btn primary" data-res="interesado">Interesado</button>
+            <button class="btn" data-res="reunion">Reunión</button>
+            <button class="btn danger" data-res="perdido">Perdido</button>
+            <button class="btn ghost" id="sigSkip" style="margin-left:auto">Saltar →</button>
+          </div>
+          <div id="sigExtra"></div>` : `<div class="sig-actions"><button class="btn ghost" id="sigSkip" style="margin-left:auto">Saltar →</button></div>`}
+      </div>`;
+    wireSigTop();
+    const key = it.key;
+    $('#sigSkip').onclick = () => { S.skipped.add(key); renderSiguiente(); render(); };
+    $('#sigTaskDone')?.addEventListener('change', async () => { try { await api('PATCH', `/api/tasks/${it.task.id}`, { hecho: true }); toast('Tarea completada ✓', 'good'); await load(); } catch (e) { fail(e); } });
+    if (!l) return;
+    $('#sigFicha').onclick = () => openLead(l.id);
+    V.addEventListener('click', async (e) => { const c = e.target.closest('[data-copy]'); if (c) { try { await navigator.clipboard.writeText(c.dataset.copy); toast('Número copiado'); } catch { toast(c.dataset.copy); } } });
+    api('GET', `/api/leads/${l.id}/activities`).then((d) => { const tl = $('#sigHist'); if (!tl) return; const acts = d.activities.slice(0, 4); tl.innerHTML = acts.length ? acts.map((a) => `<div class="tl"><div class="dot ${a.tipo}">•</div><div><div class="txt">${h(a.texto)}</div><div class="when">${fmtDT(a.en)} · ${h(a.usuario || 'Sistema')}</div></div></div>`).join('') : '<div class="faint small">Sin movimientos todavía.</div>'; }).catch(() => {});
+    const send = async (tipo, fecha) => {
+      try {
+        const d = await api('POST', `/api/leads/${l.id}/resultado`, { tipo, fecha: fecha || null, nota: $('#sigNota')?.value || '' });
+        S.skipped.delete(key);
+        const acts = { no_contesto: 'Registrado: no contestó', volver: 'Registrado: volver a llamar', interesado: `${d.lead.nombre} → ${stage(d.lead).nombre}`, reunion: 'Reunión agendada', contesto: 'Registrado: contestó' };
+        toast(acts[tipo] || 'Registrado', 'good'); await load();
+      } catch (e) { fail(e); }
+    };
+    const extra = $('#sigExtra');
+    const def = (h_) => { const d = new Date(Date.now() + h_ * 3600000); d.setSeconds(0, 0); return d; };
+    const manana = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; };
+    $$('[data-res]', V).forEach((b) => b.onclick = () => {
+      const r = b.dataset.res;
+      if (r === 'perdido') { const lost = stages(l.area).find((s_) => s_.tipo === 'perdida'); if (!lost) return toast('No hay una etapa de tipo Perdida en esta área.', 'bad'); lostModal(l, lost.id); return; }
+      if (r === 'no_contesto' || r === 'interesado') { send(r); return; }
+      if (r === 'volver') {
+        extra.innerHTML = `<div class="sig-extra"><span class="small muted">¿Cuándo?</span><button class="btn sm" data-when="${def(1).toISOString()}">En 1 hora</button><button class="btn sm" data-when="${def(2).toISOString()}">En 2 horas</button><button class="btn sm" data-when="${manana().toISOString()}">Mañana 9:00</button><input class="input" type="datetime-local" id="sigWhen" style="width:auto"><button class="btn sm primary" id="sigWhenOk">Programar</button></div>`;
+        $$('[data-when]', extra).forEach((x) => x.onclick = () => send('volver', x.dataset.when));
+        $('#sigWhenOk').onclick = () => { const v = $('#sigWhen').value; if (!v) return toast('Elige fecha y hora.', 'bad'); send('volver', fromLocalInput(v)); };
+      }
+      if (r === 'reunion') {
+        extra.innerHTML = `<div class="sig-extra"><span class="small muted">Fecha y hora de la reunión</span><input class="input" type="datetime-local" id="sigWhen" style="width:auto" value="${toLocalInput(manana().toISOString())}"><button class="btn sm primary" id="sigWhenOk">Agendar reunión</button></div>`;
+        $('#sigWhenOk').onclick = () => { const v = $('#sigWhen').value; if (!v) return toast('Elige fecha y hora.', 'bad'); send('reunion', fromLocalInput(v)); };
+      }
+    });
+  }
+  function wireSigTop() {
+    $('#sigUser')?.addEventListener('change', (e) => { S.sigUser = Number(e.target.value); S.skipped.clear(); render(); });
+    $('#sigUnskip')?.addEventListener('click', () => { S.skipped.clear(); renderSiguiente(); });
   }
 
   // ---------- tablero ----------
@@ -229,7 +353,7 @@
     return `<div class="card" draggable="true" data-id="${l.id}">
       <div class="top"><span class="name">${h(l.nombre)}</span>${l.monto != null ? `<span class="num small"><b>${money(l.monto)}</b></span>` : ''}</div>
       <div class="small muted">${flag(l.pais)} ${h([countryName(l.pais), l.ciudad].filter(Boolean).join(' · ')) || '<span class="faint">Sin ubicación</span>'}</div>
-      <div class="bottom">${r ? `<span class="avatar" title="${h(r.nombre)}">${initials(r.nombre)}</span>` : '<span class="avatar none" title="Sin asignar">—</span>'}${due}<span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span></div>
+      <div class="bottom">${r ? `<span class="avatar" title="${h(r.nombre)}">${initials(r.nombre)}</span>` : '<span class="avatar none" title="Sin asignar">—</span>'}${due || timerChip(l)}<span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span></div>
       ${l.ad_name || l.origen_tipo === 'manual' ? `<div class="src">${h(l.ad_name ? `${l.ad_name}` : 'Creado manualmente')}</div>` : ''}
     </div>`;
   }
@@ -282,6 +406,9 @@
     if (f.etapa) leads = leads.filter((l) => l.etapa === f.etapa);
     if (f.responsable === 'none') leads = leads.filter((l) => l.responsable_id == null); else if (f.responsable) leads = leads.filter((l) => l.responsable_id === Number(f.responsable));
     if (f.origen) leads = leads.filter((l) => (f.origen === 'meta' ? l.origen_tipo !== 'manual' : l.origen_tipo === 'manual'));
+    if (f.contacto === 'sin') leads = leads.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en);
+    else if (f.contacto === 'con') leads = leads.filter((l) => l.primer_contacto_en);
+    else if (f.contacto === 'nr') leads = leads.filter((l) => l.sin_respuesta_en);
     const key = { creado: (l) => l.lead_creado_en || l.creado_en, nombre: (l) => l.nombre.toLowerCase(), etapa: (l) => stages(l.area).findIndex((s) => s.id === l.etapa), monto: (l) => Number(l.monto) || 0, proxima: (l) => l.proxima_fecha || '9999', responsable: (l) => uname(l.responsable_id), pais: (l) => countryName(l.pais) }[f.sort] || ((l) => l.creado_en);
     leads.sort((a, b) => { const x = key(a), y = key(b); return (x > y ? 1 : x < y ? -1 : 0) * (f.dir === 'asc' ? 1 : -1); });
     const th = (id, label) => `<th data-sort="${id}" class="${f.sort === id ? 'on' : ''}">${label} ${f.sort === id ? (f.dir === 'asc' ? '↑' : '↓') : ''}</th>`;
@@ -293,8 +420,10 @@
         <select class="input" id="fEtapa"><option value="">Todas las etapas</option>${stages(area).map((s) => `<option value="${s.id}" ${f.etapa === s.id ? 'selected' : ''}>${h(s.nombre)}</option>`).join('')}</select>
         ${isAdmin() ? `<select class="input" id="fResp"><option value="">Todos los responsables</option><option value="none" ${f.responsable === 'none' ? 'selected' : ''}>Sin asignar</option>${S.users.map((u) => `<option value="${u.id}" ${String(f.responsable) === String(u.id) ? 'selected' : ''}>${h(u.nombre)}</option>`).join('')}</select>` : ''}
         <select class="input" id="fOrigen"><option value="">Todos los orígenes</option><option value="meta" ${f.origen === 'meta' ? 'selected' : ''}>Meta</option><option value="manual" ${f.origen === 'manual' ? 'selected' : ''}>Manual</option></select>
+        <select class="input" id="fContacto"><option value="">Contacto: todos</option><option value="sin" ${f.contacto === 'sin' ? 'selected' : ''}>Sin contactar</option><option value="con" ${f.contacto === 'con' ? 'selected' : ''}>Contactados</option><option value="nr" ${f.contacto === 'nr' ? 'selected' : ''}>Sin respuesta</option></select>
         <span class="muted small">${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
-        ${isAdmin() ? `<a class="btn sm" href="/api/export.csv" style="margin-left:auto">Exportar CSV</a>` : ''}
+        ${isAdmin() && area === 'FTD' && S.config.reparto?.activo && S.sinAsignar ? `<button class="btn sm" id="repartirBtn" style="margin-left:auto">Repartir sin asignar (${S.sinAsignar})</button>` : ''}
+        ${isAdmin() ? `<a class="btn sm" href="/api/export.csv" ${!(area === 'FTD' && S.config.reparto?.activo && S.sinAsignar) ? 'style="margin-left:auto"' : ''}>Exportar CSV</a>` : ''}
       </div>
       ${sel.size ? `<div class="bulkbar"><b>${sel.size} seleccionado${sel.size === 1 ? '' : 's'}</b>
         <select class="input" id="bulkResp" style="width:auto"><option value="">Asignar a…</option><option value="none">Sin asignar</option>${usersForArea(area).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select>
@@ -312,11 +441,13 @@
           <td class="num">${money(l.monto)}</td>
           <td>${l.proxima_fecha ? `<span class="due ${dueClass(l.proxima_fecha)}">${fmtDT(l.proxima_fecha)}</span><div class="sub">${h(l.proxima_accion || '')}</div>` : '<span class="faint">—</span>'}</td>
           <td><div class="small">${origenLabel(l)}</div>${l.ad_name ? `<div class="sub">${h(l.ad_name)}</div>` : ''}</td>
-          <td class="small muted" title="${h(fmtDT(l.lead_creado_en || l.creado_en))}">${ago(l.lead_creado_en || l.creado_en)}</td></tr>`).join('') || `<tr><td colspan="10" class="empty" style="border:0">No hay leads con estos filtros.</td></tr>`}
+          <td class="small muted" title="${h(fmtDT(l.lead_creado_en || l.creado_en))}">${ago(l.lead_creado_en || l.creado_en)}<div>${timerChip(l)}</div></td></tr>`).join('') || `<tr><td colspan="10" class="empty" style="border:0">No hay leads con estos filtros.</td></tr>`}
         </tbody></table></div>`;
     $('#fEtapa').onchange = (e) => { f.etapa = e.target.value; renderLista(); };
     $('#fResp') && ($('#fResp').onchange = (e) => { f.responsable = e.target.value; renderLista(); });
     $('#fOrigen').onchange = (e) => { f.origen = e.target.value; renderLista(); };
+    $('#fContacto').onchange = (e) => { f.contacto = e.target.value; renderLista(); };
+    $('#repartirBtn') && ($('#repartirBtn').onclick = async () => { try { const r = await api('POST', '/api/leads/repartir'); toast(`${r.repartidos} lead(s) repartido(s)${r.pendientes ? `, ${r.pendientes} sin cupo` : ''}`, 'good'); await load(); } catch (e) { fail(e); } });
     $$('th[data-sort]').forEach((t) => t.onclick = () => { if (f.sort === t.dataset.sort) f.dir = f.dir === 'asc' ? 'desc' : 'asc'; else { f.sort = t.dataset.sort; f.dir = t.dataset.sort === 'nombre' ? 'asc' : 'desc'; } renderLista(); });
     $('tbody', V).addEventListener('click', (e) => {
       if (e.target.classList.contains('selOne')) { const id = Number(e.target.dataset.id); e.target.checked ? sel.add(id) : sel.delete(id); renderLista(); return; }
@@ -402,10 +533,14 @@
     const cal = inPeriod.filter((l) => l.calificado_en).length, cli = inPeriod.filter((l) => l.cliente_en).length, per = inPeriod.filter((l) => l.perdido_en).length;
     const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
     const montoCli = inPeriod.filter((l) => l.cliente_en).reduce((a, l) => a + (Number(l.monto) || 0), 0);
+    const minutosContacto = (l) => (l.primer_contacto_en ? Math.max(0, (new Date(l.primer_contacto_en) - new Date(l.asignado_en || l.lead_creado_en || l.creado_en)) / 60000) : null);
+    const mediana = (arr) => { const a = arr.filter((x) => x != null).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
+    const med = mediana(inPeriod.map(minutosContacto));
+    const sinContacto = inPeriod.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en && stage(l).tipo === 'abierta').length;
     const pipeline = base.filter((l) => !['ganada', 'perdida'].includes(stage(l).tipo)).reduce((a, l) => a + (Number(l.monto) || 0), 0);
-    const group = (list, keyFn) => { const m = new Map(); for (const l of list) { const k = keyFn(l) || '—'; const g = m.get(k) || { k, n: 0, cal: 0, cli: 0, monto: 0 }; g.n++; if (l.calificado_en) g.cal++; if (l.cliente_en) { g.cli++; g.monto += Number(l.monto) || 0; } m.set(k, g); } return [...m.values()].sort((a, b) => b.n - a.n); };
+    const group = (list, keyFn) => { const m = new Map(); for (const l of list) { const k = keyFn(l) || '—'; const g = m.get(k) || { k, n: 0, cal: 0, cli: 0, monto: 0, mins: [] }; g.n++; if (l.calificado_en) g.cal++; if (l.cliente_en) { g.cli++; g.monto += Number(l.monto) || 0; } g.mins.push(minutosContacto(l)); m.set(k, g); } return [...m.values()].sort((a, b) => b.n - a.n); };
     const bars = (rows, cls = '') => { const max = Math.max(1, ...rows.map((r) => r.n)); return `<div class="bars">${rows.slice(0, 12).map((r) => `<div class="bar ${cls}" title="${h(r.k)}: ${r.n} leads · ${r.cal} calificados · ${r.cli} clientes"><span class="lbl">${h(r.k)}</span><div class="track"><div class="fill" style="width:${(r.n / max) * 100}%"></div></div><span class="num small">${r.n}</span></div>`).join('') || '<div class="faint small">Sin datos</div>'}</div>`; };
-    const table = (rows) => `<div class="tablewrap mini"><table><thead><tr><th></th><th>Leads</th><th>Calif.</th><th>Clientes</th><th>Tasa cierre</th><th>Monto</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${h(r.k)}</td><td class="num">${r.n}</td><td class="num">${r.cal}</td><td class="num">${r.cli}</td><td class="num">${pct(r.cli, r.n)}</td><td class="num">${money(r.monto)}</td></tr>`).join('') || '<tr><td colspan="6" class="faint">Sin datos</td></tr>'}</tbody></table></div>`;
+    const table = (rows, conTiempo = false) => `<div class="tablewrap mini"><table><thead><tr><th></th><th>Leads</th>${conTiempo ? '<th>1er contacto</th>' : ''}<th>Calif.</th><th>Clientes</th><th>Tasa cierre</th><th>Monto</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${h(r.k)}</td><td class="num">${r.n}</td>${conTiempo ? `<td class="num">${mediana(r.mins) != null ? fmtMin(Math.round(mediana(r.mins))) : '—'}</td>` : ''}<td class="num">${r.cal}</td><td class="num">${r.cli}</td><td class="num">${pct(r.cli, r.n)}</td><td class="num">${money(r.monto)}</td></tr>`).join('') || '<tr><td colspan="7" class="faint">Sin datos</td></tr>'}</tbody></table></div>`;
     const areaForStages = f.area === 'AMBAS' ? 'FTD' : f.area;
     const stageRows = stages(areaForStages).map((s) => ({ k: s.nombre, n: inPeriod.filter((l) => l.area === areaForStages && l.etapa === s.id).length, cal: 0, cli: 0 }));
     const canFilterArea = bothAreas();
@@ -420,6 +555,7 @@
           <div class="tile"><span class="s">Leads nuevos</span><span class="v num">${inPeriod.length}</span><span class="s faint">${f.periodo === 'todo' ? 'histórico' : `últimos ${f.periodo} días`}</span></div>
           <div class="tile"><span class="s">Calificados</span><span class="v num">${cal}</span><span class="s faint">${pct(cal, inPeriod.length)} de los leads</span></div>
           <div class="tile"><span class="s">Clientes</span><span class="v num">${cli}</span><span class="s faint">${pct(cli, inPeriod.length)} de cierre</span></div>
+          <div class="tile"><span class="s">Primer contacto</span><span class="v num">${med != null ? fmtMin(Math.round(med)) : '—'}</span><span class="s faint">mediana · ${sinContacto} sin contactar</span></div>
           <div class="tile"><span class="s">Perdidos</span><span class="v num">${per}</span><span class="s faint">${pct(per, inPeriod.length)}</span></div>
           <div class="tile"><span class="s">Monto cerrado</span><span class="v num">${money(montoCli)}</span><span class="s faint">clientes del período</span></div>
           <div class="tile"><span class="s">En embudo</span><span class="v num">${money(pipeline)}</span><span class="s faint">monto de leads abiertos</span></div>
@@ -430,7 +566,7 @@
           <div class="panel"><h2>Por campaña</h2>${bars(group(inPeriod, (l) => l.campaign_name || (l.origen_tipo === 'manual' ? 'Manual' : 'Sin campaña')))}</div>
           <div class="panel"><h2>Por país</h2>${bars(group(inPeriod, (l) => countryName(l.pais) || 'Sin país'))}</div>
         </div>
-        ${isAdmin() ? `<div class="panel"><h2>Por vendedor</h2>${table(group(inPeriod, (l) => uname(l.responsable_id)))}</div>` : ''}
+        ${isAdmin() ? `<div class="panel"><h2>Por vendedor</h2>${table(group(inPeriod, (l) => uname(l.responsable_id)), true)}</div>` : ''}
         <div class="panel"><h2>Por anuncio · detalle</h2>${table(group(inPeriod, (l) => l.ad_name || (l.origen_tipo === 'manual' ? 'Manual' : 'Sin anuncio')))}</div>
       </div>`;
     $('#mPer').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { f.periodo = b.dataset.v; renderMetricas(); } };
@@ -532,7 +668,7 @@
       box.innerHTML = `<div class="stack" style="gap:8px"><div><b>${f.name}</b> · ${rows.length} fila(s) · ${nuevos} nueva(s) · ${rows.length - nuevos} ya en el CRM</div>
         <div class="small muted">Columnas: ${cols.map((c) => `<code>${h(c)}</code>`).join(' ')}</div>
         <div><button class="btn primary" id="doImport" ${nuevos ? '' : 'disabled'}>Importar ${nuevos} lead(s)</button></div></div>`;
-      $('#doImport').onclick = async () => { $('#doImport').disabled = true; try { const r = await api('POST', '/api/import', { rows }); toast(`${r.nuevos} importado(s), ${r.repetidos} repetido(s)`, 'good'); await load(); go('lista'); } catch (e) { fail(e); $('#doImport').disabled = false; } };
+      $('#doImport').onclick = async () => { $('#doImport').disabled = true; try { const r = await api('POST', '/api/import', { rows }); toast(`${r.nuevos} importado(s), ${r.repetidos} repetido(s)${r.repartidos ? `, ${r.repartidos} repartido(s) al equipo` : ''}`, 'good'); await load(); go('lista'); } catch (e) { fail(e); $('#doImport').disabled = false; } };
     } catch (e) { box.innerHTML = `<p style="color:var(--bad)">${h(e.message)}</p>`; }
   }
 
@@ -549,6 +685,13 @@
       <div class="two"><div class="panel"><h2>Etapas FTD</h2><p class="small muted" style="margin:0">Marca una etapa como <b>Calificado</b> para medir la tasa de calificación, una como <b>Ganada</b> (cliente) y una como <b>Perdida</b>.</p>${stageEditor('FTD')}</div>
       <div class="panel"><h2>Etapas Retención</h2><p class="small muted" style="margin:0">Cuando un lead llega a Cliente en FTD, pásalo a Retención desde su ficha.</p>${stageEditor('RET')}</div></div>
       <div class="panel"><h2>Motivos de pérdida</h2><textarea class="input" id="sMotivos" rows="4">${h((c.motivos_perdida || []).join('\n'))}</textarea><span class="small muted">Uno por línea.</span></div>
+      <div class="two">
+        <div class="panel"><h2>Modo Siguiente</h2><p class="small muted" style="margin:0">Cuando un lead no contesta, Zigga programa el reintento solo. Al llegar al máximo de intentos, el lead sale de la cola como "Sin respuesta".</p>
+          <div class="field-grid"><label class="field">Reintentar a los (minutos)<input class="input num" id="sReintento" type="number" min="5" max="1440" value="${c.siguiente.reintento_minutos}"></label><label class="field">Máximo de intentos<input class="input num" id="sMaxInt" type="number" min="1" max="10" value="${c.siguiente.max_intentos}"></label></div></div>
+        <div class="panel"><h2>Reparto automático (FTD)</h2><p class="small muted" style="margin:0">Los leads que llegan de Meta (archivo, sincronización o webhook) se reparten por turnos entre los vendedores activos con acceso a FTD. Si nadie toca el lead a tiempo, pasa al siguiente.</p>
+          <label class="check"><input type="checkbox" id="sRepActivo" ${c.reparto.activo ? 'checked' : ''}> Activar reparto por turnos</label>
+          <div class="field-grid"><label class="field">Tope diario por vendedor (0 = sin tope)<input class="input num" id="sTope" type="number" min="0" max="1000" value="${c.reparto.tope_diario}"></label><label class="field">Reasignar si no lo tocan en (minutos, 0 = nunca)<input class="input num" id="sReasignar" type="number" min="0" max="1440" value="${c.reparto.reasignar_minutos}"></label></div></div>
+      </div>
       <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div></div>`;
     V.addEventListener('click', (e) => {
       const row = e.target.closest('.stage-row'); const add = e.target.closest('[data-add]');
@@ -561,7 +704,8 @@
     $('#saveSettings').onclick = async () => {
       const read = (area) => $$(`#st_${area} .stage-row`).map((r, i) => ({ id: c.etapas[area][Number(r.dataset.i)]?.id || undefined, nombre: r.querySelector('[data-f=nombre]').value, tipo: r.querySelector('[data-f=tipo]').value }));
       try {
-        await api('PUT', '/api/settings', { empresa: $('#sEmpresa').value, moneda: $('#sMoneda').value.toUpperCase(), motivos_perdida: $('#sMotivos').value.split('\n'), etapas: { FTD: read('FTD'), RET: read('RET') } });
+        await api('PUT', '/api/settings', { empresa: $('#sEmpresa').value, moneda: $('#sMoneda').value.toUpperCase(), motivos_perdida: $('#sMotivos').value.split('\n'), etapas: { FTD: read('FTD'), RET: read('RET') },
+          siguiente: { reintento_minutos: $('#sReintento').value, max_intentos: $('#sMaxInt').value }, reparto: { activo: $('#sRepActivo').checked, tope_diario: $('#sTope').value, reasignar_minutos: $('#sReasignar').value } });
         toast('Ajustes guardados', 'good'); await load();
       } catch (e) { fail(e); }
     };

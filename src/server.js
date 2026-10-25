@@ -5,7 +5,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, DEFAULT_SETTINGS } from './db.js';
+import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, findStage, forwardStage, DEFAULT_SETTINGS } from './db.js';
+import { startReparto, repartirLeads } from './reparto.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, publicUser,
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
@@ -189,6 +190,7 @@ app.post('/api/leads', requireAuth, (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', '{}', ?, ?, ?, ?)`)
     .run(nombre, str(b.correo), normalizePhone(b.whatsapp) || null, str(b.pais, 80), str(b.ciudad, 120), num(b.monto), area, etapa, responsable_id,
       str(b.proxima_accion), isoOrNull(b.proxima_fecha), str(b.notas, 5000), now, now, now, req.user.id);
+  if (responsable_id) db.prepare('UPDATE leads SET asignado_en = ?, ultimo_toque_en = ? WHERE id = ?').run(now, responsable_id === req.user.id ? now : null, Number(r.lastInsertRowid));
   const id = Number(r.lastInsertRowid);
   act(id, 'creacion', `Lead creado manualmente por ${req.user.nombre}`, req.user.id);
   if (responsable_id) act(id, 'asignacion', `Asignado a ${userName(responsable_id)}`, req.user.id, null, userName(responsable_id));
@@ -258,6 +260,8 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
 
   if (!Object.keys(sets).length) return res.json({ lead: rowToLead(lead) });
   sets.actualizado_en = now;
+  if ('responsable_id' in sets) { sets.asignado_en = sets.responsable_id == null ? null : now; sets.ultimo_toque_en = null; sets.reasignaciones = 0; }
+  else if (lead.responsable_id === req.user.id) sets.ultimo_toque_en = now;
   const keys = Object.keys(sets);
   db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k]), lead.id);
 
@@ -301,8 +305,8 @@ app.post('/api/leads/:id/retencion', requireAuth, (req, res) => {
     }
   }
   const now = nowIso();
-  db.prepare('UPDATE leads SET area = ?, etapa = ?, responsable_id = ?, retencion_en = COALESCE(retencion_en, ?), perdido_en = NULL, motivo_perdida = NULL, actualizado_en = ? WHERE id = ?')
-    .run('RET', first, rid, now, now, lead.id);
+  db.prepare('UPDATE leads SET area = ?, etapa = ?, responsable_id = ?, retencion_en = COALESCE(retencion_en, ?), perdido_en = NULL, motivo_perdida = NULL, actualizado_en = ?, asignado_en = ?, ultimo_toque_en = ? WHERE id = ?')
+    .run('RET', first, rid, now, now, rid == null ? null : now, rid === req.user.id ? now : null, lead.id);
   act(lead.id, 'area', `Pasó a Retención (etapa ${stageName(config, 'RET', first)})`, req.user.id, 'FTD', 'RET');
   if (rid !== lead.responsable_id) act(lead.id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar: pendiente de entregar al equipo de Retención', req.user.id, userName(lead.responsable_id), userName(rid));
   res.json({ lead: rowToLead(q.leadById.get(lead.id)) });
@@ -313,14 +317,15 @@ app.post('/api/leads/assign', requireAdmin, (req, res) => {
   const rid = req.body?.responsable_id == null || req.body?.responsable_id === '' ? null : Number(req.body.responsable_id);
   const target = rid != null ? q.userById.get(rid) : null;
   if (rid != null && !target) return res.status(400).json({ error: 'Ese vendedor no existe.' });
-  const upd = db.prepare('UPDATE leads SET responsable_id = ?, actualizado_en = ? WHERE id = ?');
+  const upd = db.prepare('UPDATE leads SET responsable_id = ?, actualizado_en = ?, asignado_en = ?, ultimo_toque_en = NULL, reasignaciones = 0 WHERE id = ?');
   let n = 0, omitidos = 0;
   for (const id of ids) {
     const lead = q.leadById.get(id);
     if (!lead || !canSeeLead(req.user, lead)) continue;
     if (lead.responsable_id === rid) continue;
     if (target && !hasArea(target, lead.area)) { omitidos++; continue; }
-    upd.run(rid, nowIso(), id);
+    const t = nowIso();
+    upd.run(rid, t, rid == null ? null : t, id);
     act(id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar', req.user.id, userName(lead.responsable_id), userName(rid));
     n++;
   }
@@ -351,8 +356,50 @@ app.post('/api/leads/:id/notas', requireAuth, (req, res) => {
   if (!texto) return res.status(400).json({ error: 'Escribe la nota.' });
   const tipo = ['nota', 'llamada', 'whatsapp', 'reunion'].includes(req.body?.tipo) ? req.body.tipo : 'nota';
   act(lead.id, tipo, texto, req.user.id);
-  db.prepare('UPDATE leads SET actualizado_en = ? WHERE id = ?').run(nowIso(), lead.id);
+  db.prepare('UPDATE leads SET actualizado_en = ?, ultimo_toque_en = ? WHERE id = ?').run(nowIso(), nowIso(), lead.id);
   res.status(201).json({ ok: true });
+});
+
+// ---------- resultado de un toque (Modo Siguiente) ----------
+app.post('/api/leads/:id/resultado', requireAuth, (req, res) => {
+  const lead = q.leadById.get(Number(req.params.id));
+  if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
+  const config = getConfig(db);
+  const stages = config.etapas[lead.area] || [];
+  const cur = stages.find((st) => st.id === lead.etapa);
+  if (cur?.tipo === 'perdida') return res.status(400).json({ error: 'Este lead está marcado como perdido. Cámbiale la etapa para reabrirlo.' });
+  const { tipo, nota, fecha } = req.body || {};
+  const now = nowIso();
+  const sets = { actualizado_en: now, ultimo_toque_en: now };
+  const contactado = findStage(stages, { hints: ['contact'] }) || stages[1] || null;
+  const calificado = findStage(stages, { tipo: 'calificado' }) || contactado;
+  const reunion = findStage(stages, { hints: ['reuni', 'cita', 'agend'] }) || calificado;
+  const seguimiento = findStage(stages, { hints: ['seguim'] });
+  const markContact = () => { if (!lead.primer_contacto_en) sets.primer_contacto_en = now; sets.ultimo_contacto_en = now; sets.intentos = 0; sets.sin_respuesta_en = null; };
+  const plus = (ms) => new Date(Date.now() + ms).toISOString();
+  const manana9 = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.toISOString(); };
+  let texto, nextStage = lead.etapa;
+  switch (tipo) {
+    case 'no_contesto': {
+      const intentos = (lead.intentos || 0) + 1; sets.intentos = intentos;
+      const { max_intentos: max, reintento_minutos: mins } = config.siguiente;
+      if (intentos >= max) { sets.sin_respuesta_en = now; sets.proxima_accion = null; sets.proxima_fecha = null; texto = `No contestó (intento ${intentos} de ${max}). Sin respuesta: sale de la cola.`; }
+      else { sets.proxima_accion = 'Reintentar llamada'; sets.proxima_fecha = isoOrNull(fecha) || plus(mins * 60000); texto = `No contestó (intento ${intentos} de ${max}). Reintento ${fmtDate(sets.proxima_fecha)}`; }
+      break;
+    }
+    case 'volver': { markContact(); nextStage = forwardStage(stages, lead.etapa, contactado); const f = isoOrNull(fecha) || plus(2 * 3600000); sets.proxima_accion = 'Volver a llamar'; sets.proxima_fecha = f; texto = `Contestó. Volver a llamar ${fmtDate(f)}`; break; }
+    case 'interesado': { markContact(); nextStage = forwardStage(stages, lead.etapa, lead.area === 'RET' ? (seguimiento || contactado) : calificado); const f = isoOrNull(fecha) || manana9(); sets.proxima_accion = 'Seguimiento'; sets.proxima_fecha = f; texto = `Contestó, interesado. Seguimiento ${fmtDate(f)}`; break; }
+    case 'reunion': { const f = isoOrNull(fecha); if (!f) return res.status(400).json({ error: 'Indica fecha y hora de la reunión.' }); markContact(); nextStage = forwardStage(stages, lead.etapa, reunion); sets.proxima_accion = 'Reunión'; sets.proxima_fecha = f; texto = `Reunión agendada ${fmtDate(f)}`; break; }
+    case 'contesto': { markContact(); nextStage = forwardStage(stages, lead.etapa, contactado); texto = 'Contestó'; break; }
+    default: return res.status(400).json({ error: 'Resultado desconocido.' });
+  }
+  if (nextStage !== lead.etapa) { sets.etapa = nextStage; Object.assign(sets, stageMarks(config, lead.area, nextStage, lead, now)); }
+  const keys = Object.keys(sets);
+  db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k]), lead.id);
+  act(lead.id, 'llamada', texto, req.user.id);
+  if (sets.etapa) act(lead.id, 'etapa', `Etapa: ${stageName(config, lead.area, lead.etapa)} → ${stageName(config, lead.area, sets.etapa)}`, req.user.id, stageName(config, lead.area, lead.etapa), stageName(config, lead.area, sets.etapa));
+  const n = str(nota, 4000); if (n) act(lead.id, 'nota', n, req.user.id);
+  res.json({ lead: rowToLead(q.leadById.get(lead.id)) });
 });
 
 // ---------- tasks ----------
@@ -371,7 +418,7 @@ app.post('/api/tasks', requireAuth, (req, res) => {
   const now = nowIso();
   const r = db.prepare('INSERT INTO tasks (lead_id, titulo, fecha, asignado_id, creado_por, creado_en) VALUES (?, ?, ?, ?, ?, ?)')
     .run(leadId, titulo, fecha, asignado, req.user.id, now);
-  if (leadId != null) act(leadId, 'tarea', `Tarea creada: ${titulo} (${fmtDate(fecha)})`, req.user.id);
+  if (leadId != null) { act(leadId, 'tarea', `Tarea creada: ${titulo} (${fmtDate(fecha)})`, req.user.id); db.prepare('UPDATE leads SET ultimo_toque_en = ? WHERE id = ? AND responsable_id = ?').run(now, leadId, req.user.id); }
   res.status(201).json({ task: { ...q.taskById.get(Number(r.lastInsertRowid)), hecho: false } });
 });
 
@@ -452,6 +499,9 @@ app.put('/api/settings', requireAdmin, (req, res) => {
   if ('empresa' in b) next.empresa = str(b.empresa, 80) || current.empresa;
   if ('moneda' in b) next.moneda = str(b.moneda, 8) || 'USD';
   if (Array.isArray(b.motivos_perdida)) next.motivos_perdida = b.motivos_perdida.map((m) => str(m, 80)).filter(Boolean).slice(0, 40);
+  const int = (v, min, max, def) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
+  if (b.siguiente && typeof b.siguiente === 'object') next.siguiente = { reintento_minutos: int(b.siguiente.reintento_minutos, 5, 1440, current.siguiente.reintento_minutos), max_intentos: int(b.siguiente.max_intentos, 1, 10, current.siguiente.max_intentos) };
+  if (b.reparto && typeof b.reparto === 'object') next.reparto = { activo: !!b.reparto.activo, tope_diario: int(b.reparto.tope_diario, 0, 1000, current.reparto.tope_diario), reasignar_minutos: int(b.reparto.reasignar_minutos, 0, 1440, current.reparto.reasignar_minutos) };
   if (b.etapas && typeof b.etapas === 'object') {
     for (const area of ['FTD', 'RET']) {
       if (!Array.isArray(b.etapas[area])) continue;
@@ -490,6 +540,14 @@ app.post('/api/import', requireAdmin, (req, res) => {
   const leads = rows.map(leadFromExportRow);
   const r = insertNewLeads(db, leads, { origen: 'import', userId: req.user.id });
   res.json(r);
+});
+
+app.post('/api/leads/repartir', requireAdmin, (req, res) => {
+  const cfg = getConfig(db).reparto;
+  if (!cfg.activo) return res.status(400).json({ error: 'Activa el reparto automático en Ajustes primero.' });
+  const ids = db.prepare("SELECT id FROM leads WHERE area = 'FTD' AND responsable_id IS NULL AND perdido_en IS NULL ORDER BY COALESCE(lead_creado_en, creado_en)").all().map((r) => r.id);
+  const n = repartirLeads(db, ids);
+  res.json({ repartidos: n, pendientes: ids.length - n });
 });
 
 app.post('/api/meta/sync', requireAdmin, async (_req, res) => {
@@ -583,4 +641,5 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`[crm] Escuchando en puerto ${PORT} · base de datos en ${DB_FILE}`);
   startMetaPolling(db);
+  startReparto(db);
 });

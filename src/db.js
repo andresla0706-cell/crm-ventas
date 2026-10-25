@@ -24,6 +24,8 @@ export const DEFAULT_SETTINGS = {
     ],
   },
   motivos_perdida: ['No contesta', 'Sin presupuesto', 'No le interesa', 'Datos falsos', 'Número inválido', 'Otro'],
+  siguiente: { reintento_minutos: 120, max_intentos: 3 },
+  reparto: { activo: false, tope_diario: 0, reasignar_minutos: 15 },
 };
 
 export function openDb(file) {
@@ -115,7 +117,22 @@ export function openDb(file) {
       value TEXT NOT NULL
     );
   `);
+  migrate(db);
   return db;
+}
+
+/** Columnas añadidas después de la primera versión (SQLite no tiene IF NOT EXISTS para columnas). */
+function migrate(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(leads)').all().map((c) => c.name));
+  const add = (name, type) => { if (!cols.has(name)) db.exec(`ALTER TABLE leads ADD COLUMN ${name} ${type}`); };
+  add('primer_contacto_en', 'TEXT');
+  add('ultimo_contacto_en', 'TEXT');
+  add('intentos', 'INTEGER NOT NULL DEFAULT 0');
+  add('sin_respuesta_en', 'TEXT');
+  add('asignado_en', 'TEXT');
+  add('ultimo_toque_en', 'TEXT');
+  add('reasignaciones', 'INTEGER NOT NULL DEFAULT 0');
+  add('prioridad', 'REAL');
 }
 
 export function nowIso() {
@@ -142,6 +159,8 @@ export function getConfig(db) {
   // Fill gaps from defaults without overwriting what the admin changed.
   const merged = { ...structuredClone(DEFAULT_SETTINGS), ...saved };
   merged.etapas = { ...DEFAULT_SETTINGS.etapas, ...(saved.etapas || {}) };
+  merged.siguiente = { ...DEFAULT_SETTINGS.siguiente, ...(saved.siguiente || {}) };
+  merged.reparto = { ...DEFAULT_SETTINGS.reparto, ...(saved.reparto || {}) };
   return merged;
 }
 
@@ -151,6 +170,26 @@ export function rowToLead(row) {
   try { lead.respuestas = row.respuestas ? JSON.parse(row.respuestas) : {}; } catch { lead.respuestas = {}; }
   lead.evento_meta_enviado = !!row.evento_meta_enviado;
   return lead;
+}
+
+const norm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** Busca una etapa por tipo o por palabras en el nombre; devuelve null si no hay. */
+export function findStage(stages, { tipo, hints = [] }) {
+  if (tipo) { const byTipo = stages.find((s) => s.tipo === tipo); if (byTipo) return byTipo; }
+  for (const hnt of hints) { const byName = stages.find((s) => norm(s.nombre).includes(hnt)); if (byName) return byName; }
+  return null;
+}
+
+/** La etapa a la que debe avanzar un lead según un resultado, sin retroceder nunca. */
+export function forwardStage(stages, currentId, target) {
+  if (!target) return currentId;
+  const cur = stages.findIndex((s) => s.id === currentId);
+  const nxt = stages.findIndex((s) => s.id === target.id);
+  if (nxt < 0) return currentId;
+  const curStage = stages[cur];
+  if (curStage && (curStage.tipo === 'ganada' || curStage.tipo === 'perdida')) return currentId;
+  return nxt > cur ? target.id : currentId;
 }
 
 /** Stage-derived timestamps when a lead enters `etapaId` within `area`. */
