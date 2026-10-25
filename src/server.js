@@ -2,6 +2,8 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, DEFAULT_SETTINGS } from './db.js';
 import {
@@ -548,10 +550,28 @@ app.get('/api/export.csv', requireAdmin, (req, res) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true, time: nowIso() }));
 
 // ---------- static ----------
-app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: '1h', etag: true }));
+// index.html se sirve sin caché y con una firma de versión en los enlaces a CSS/JS,
+// así cada despliegue fuerza al navegador a bajar los archivos nuevos.
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const BUILD_ID = crypto.createHash('md5')
+  .update(['index.html', 'styles.css', 'app.js'].map((f) => fs.readFileSync(path.join(PUBLIC_DIR, f))).reduce((h, b) => Buffer.concat([h, b]), Buffer.alloc(0)))
+  .digest('hex').slice(0, 10);
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').replaceAll('{{v}}', BUILD_ID);
+const sendIndex = (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.type('html').send(INDEX_HTML);
+};
+app.get(['/', '/index.html'], sendIndex);
+app.use(express.static(PUBLIC_DIR, {
+  index: false, etag: true,
+  setHeaders(res, filePath) {
+    // Con la firma ?v= en la URL, los archivos pueden guardarse por mucho tiempo.
+    res.setHeader('Cache-Control', /\.(css|js)$/.test(filePath) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+  },
+}));
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Ruta no encontrada.' });
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+  sendIndex(req, res);
 });
 
 app.use((err, _req, res, _next) => {
