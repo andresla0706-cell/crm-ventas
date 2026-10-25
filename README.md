@@ -1,6 +1,14 @@
 # Zigga
 
-Zigga es un CRM para un equipo de ventas con dos áreas (FTD y Retención): tablero kanban por etapas, lista con filtros, ficha por lead con historial, tareas y recordatorios, métricas, equipo con roles (administrador / vendedor) y entrada de leads desde Meta Lead Ads (archivo de export, sincronización automática con el Graph API o webhook).
+Zigga es un CRM para un equipo de ventas con dos áreas (FTD y Retención) que empuja al vendedor a seguir cada lead hasta cerrarlo:
+
+- **Modo Siguiente**: un lead a la vez, en orden de urgencia, con resultados de un toque (No contestó · Volver a llamar · Interesado · Reunión · Perdido) que registran el historial y programan el siguiente paso solos.
+- **Cronómetro de primer contacto** y **reparto automático** de leads por turnos con tope diario y reasignación si nadie los toca.
+- **Prioridad automática** (0–100): reglas por formulario y perfil del lead + historial de cierres + frescura − señales de calidad.
+- **Tablero kanban**, lista con filtros, ficha con historial, tareas y recordatorios, métricas y **marcador del equipo** con modo TV.
+- **Zigga IA** (opcional, con la API de Claude): chat que consulta la base en vivo ("Pregúntale a Zigga") y **coach diario** para cada vendedor e informe del equipo para el administrador.
+- Acceso por área (FTD / Retención) por usuario; roles administrador y vendedor.
+- Entrada de leads desde Meta Lead Ads: archivo de export, sincronización automática con el Graph API o webhook.
 
 Sin dependencias externas de base de datos: Node 22 + Express + SQLite (módulo `node:sqlite`). Todo vive en un archivo dentro de `DATA_DIR`.
 
@@ -16,7 +24,7 @@ ADMIN_PASSWORD=mi-clave npm start
 
 1. Nuevo proyecto → **Deploy from GitHub repo** → este repositorio (Railway usa el `Dockerfile`).
 2. En el servicio → **Volumes** → agrega un volumen montado en `/data` (ahí queda la base de datos).
-3. **Variables**: `ADMIN_PASSWORD` (obligatoria la primera vez), `WEBHOOK_KEY` (opcional), `META_ACCESS_TOKEN` + `META_FORM_IDS` (opcional, para que los leads lleguen solos cada 5 minutos).
+3. **Variables**: `ADMIN_PASSWORD` (obligatoria la primera vez), `WEBHOOK_KEY` (opcional), `META_ACCESS_TOKEN` + `META_FORM_IDS` (opcional, para que los leads lleguen solos cada 5 minutos), `ANTHROPIC_API_KEY` (opcional, activa el chat y el coach; `ANTHROPIC_MODEL` por defecto `claude-sonnet-5-5`; `COACH_HORA` por defecto 6).
 4. **Settings → Networking → Generate domain** para obtener la URL pública.
 
 Cada vez que haces push a la rama principal, Railway vuelve a desplegar.
