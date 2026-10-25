@@ -15,6 +15,7 @@
 
   const ICONS = {
     siguiente: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    zigga: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.9L12 16l-1.8-4.6L5.5 9.5l4.7-1.9z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/><path d="M5 16l.6 1.4 1.4.6-1.4.6L5 20l-.6-1.4L3 18l1.4-.6z"/></svg>',
     marcador: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
     tablero: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="4" height="8" rx="1"/></svg>',
     lista: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
@@ -131,7 +132,7 @@
     const snap = JSON.stringify([d.leads, d.tasks, d.users, d.config, d.sin_asignar, d.meta?.ultimo]);
     const changed = snap !== S.lastSnapshot;
     S.lastSnapshot = snap;
-    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado });
+    Object.assign(S, { user: d.user, config: d.config, users: d.users, leads: d.leads, tasks: d.tasks, sinAsignar: d.sin_asignar, meta: d.meta, webhook: d.webhook_configurado, ia: d.ia });
     if (!silent || changed) { render(); if (S.openLeadId) refreshDrawer(); }
   }
   async function start() {
@@ -149,7 +150,7 @@
   const VIEWS = [
     { id: 'siguiente', label: 'Siguiente', admin: false },
     { id: 'tablero', label: 'Tablero', admin: false }, { id: 'lista', label: 'Lista', admin: false }, { id: 'tareas', label: 'Tareas', admin: false },
-    { id: 'metricas', label: 'Métricas', admin: false }, { id: 'marcador', label: 'Marcador', admin: false }, { id: 'equipo', label: 'Equipo', admin: true }, { id: 'importar', label: 'Importar', admin: true },
+    { id: 'metricas', label: 'Métricas', admin: false }, { id: 'marcador', label: 'Marcador', admin: false }, { id: 'zigga', label: 'Pregúntale a Zigga', admin: false }, { id: 'equipo', label: 'Equipo', admin: true }, { id: 'importar', label: 'Importar', admin: true },
     { id: 'ajustes', label: 'Ajustes', admin: true }, { id: 'cuenta', label: 'Mi cuenta', admin: false },
   ];
   window.addEventListener('hashchange', route);
@@ -182,9 +183,9 @@
     $('#nav').innerHTML = nav.map((v) => `<button class="navitem ${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}" title="${v.id === 'lista' ? 'Leads sin asignar' : 'Tareas vencidas o para hoy'}">${badges[v.id]}</span>` : ''}</button>`).join('');
     const mobile = nav.filter((v) => ['siguiente', 'tablero', 'lista', 'tareas', 'metricas'].includes(v.id));
     $('#bottomnav').innerHTML = mobile.map((v) => `<button class="${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}">${badges[v.id]}</span>` : ''}</button>`).join('')
-      + `<button class="${['marcador', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(S.view) ? 'on' : ''}" data-more="1">${ICONS.ajustes}<span>Más</span></button>`;
+      + `<button class="${['marcador', 'zigga', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(S.view) ? 'on' : ''}" data-more="1">${ICONS.ajustes}<span>Más</span></button>`;
     if (document.activeElement?.id !== 'q') renderTopbar();
-    const r = { siguiente: renderSiguiente, tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, marcador: renderMarcador, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
+    const r = { siguiente: renderSiguiente, tablero: renderTablero, lista: renderLista, tareas: renderTareas, metricas: renderMetricas, marcador: renderMarcador, zigga: renderZigga, equipo: renderEquipo, importar: renderImportar, ajustes: renderAjustes, cuenta: renderCuenta }[S.view];
     r();
   }
   /** Reemplaza el contenido de la vista por un nodo nuevo (así no se acumulan listeners). */
@@ -194,12 +195,12 @@
     if (e.target.closest('[data-more]')) moreMenu();
   });
   function moreMenu() {
-    const items = VIEWS.filter((v) => ['marcador', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(v.id) && (!v.admin || isAdmin()));
+    const items = VIEWS.filter((v) => ['marcador', 'zigga', 'equipo', 'importar', 'ajustes', 'cuenta'].includes(v.id) && (!v.admin || isAdmin()));
     modal(`<h2>Más</h2><div class="list">${items.map((v) => `<button class="btn" data-go="${v.id}" onclick="document.getElementById('overlay').innerHTML=''">${v.label}</button>`).join('')}</div>`);
   }
 
   function renderTopbar() {
-    const titles = { siguiente: 'Siguiente', marcador: 'Marcador del equipo', tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
+    const titles = { siguiente: 'Siguiente', marcador: 'Marcador del equipo', zigga: 'Pregúntale a Zigga', tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
     const showArea = ['tablero', 'lista'].includes(S.view) && bothAreas();
     const showSearch = ['tablero', 'lista'].includes(S.view);
     $('#topbar').innerHTML = `
@@ -618,6 +619,59 @@
       <p class="small faint" style="margin:0">Contactos: llamadas contestadas, WhatsApp y reuniones registradas. Racha: días seguidos con al menos un contacto.</p>`;
   }
 
+  // ---------- Zigga IA ----------
+  /** Markdown mínimo y seguro: negritas, viñetas, saltos y enlaces a fichas [Nombre](#lead-ID). */
+  function md(text) {
+    let t = h(text);
+    t = t.replace(/\[([^\]]+)\]\(#lead-(\d+)\)/g, '<a href="#lead-$2" class="lead-link">$1</a>');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    const lines = t.split('\n'); let out = ''; let inList = false;
+    for (const ln of lines) {
+      const li = ln.match(/^\s*(?:[-•*]|\d+[.)])\s+(.*)$/);
+      if (li) { if (!inList) { out += '<ul>'; inList = true; } out += `<li>${li[1]}</li>`; continue; }
+      if (inList) { out += '</ul>'; inList = false; }
+      if (ln.trim()) out += `<p>${ln}</p>`;
+    }
+    if (inList) out += '</ul>';
+    return out;
+  }
+  S.chat = S.chat || [];
+  function renderZigga() {
+    const V = fresh();
+    if (!S.ia?.activa) {
+      V.innerHTML = `<div class="panel" style="max-width:620px"><h2>Zigga IA aún no está activado</h2><p class="muted" style="margin:0">${isAdmin() ? 'Agrega la variable <code>ANTHROPIC_API_KEY</code> (tu llave de la API de Claude) en el servidor y reinicia. Opcional: <code>ANTHROPIC_MODEL</code>.' : 'Pídele al administrador que lo active.'}</p></div>`;
+      return;
+    }
+    const sug = isAdmin()
+      ? ['¿Qué leads llevan más de 3 días sin tocar y quién los tiene?', '¿Qué anuncio trae los leads que más se califican?', '¿Cuánto monto hay en propuesta enviada este mes?', '¿Cómo va cada vendedor hoy: contactos, calificados y cierres?', '¿Cuántos leads nuevos llegaron esta semana por país?']
+      : ['¿A quién debería llamar primero y por qué?', '¿Qué leads míos llevan más de 2 días sin tocar?', '¿Cuántos leads califiqué esta semana?', 'Resume mis leads en reunión agendada'];
+    V.innerHTML = `<div class="chat">
+      <div class="chat-log" id="chatLog">${S.chat.length ? S.chat.map(chatBubble).join('') : `<div class="chat-hello"><div class="brand big">${$('.rail .brand svg').outerHTML}</div><h2>Pregúntame lo que quieras de tus leads</h2><p class="muted">Consulto la base de datos en vivo y respondo con cifras y enlaces a las fichas.${isAdmin() ? '' : ' Solo veo tus leads.'}</p></div>`}</div>
+      <div class="chat-sug" id="chatSug">${sug.map((q) => `<button class="chip" data-q="${h(q)}">${h(q)}</button>`).join('')}</div>
+      <form class="chat-form" id="chatForm"><input class="input lg" id="chatIn" placeholder="Escribe tu pregunta…" autocomplete="off"><button class="btn primary lg" type="submit" id="chatSend">Preguntar</button>${S.chat.length ? '<button class="btn ghost" type="button" id="chatClear" title="Nueva conversación">Nueva</button>' : ''}</form>
+    </div>`;
+    const log = $('#chatLog'); log.scrollTop = log.scrollHeight;
+    $('#chatSug').onclick = (e) => { const b = e.target.closest('[data-q]'); if (b) ask(b.dataset.q); };
+    $('#chatForm').onsubmit = (e) => { e.preventDefault(); const q = $('#chatIn').value.trim(); if (q) ask(q); };
+    $('#chatClear') && ($('#chatClear').onclick = () => { S.chat = []; renderZigga(); });
+    log.addEventListener('click', (e) => { const a = e.target.closest('a.lead-link'); if (a) { e.preventDefault(); const id = Number(a.getAttribute('href').replace('#lead-', '')); openLead(id); } const d = e.target.closest('.chat-q summary'); void d; });
+    async function ask(q) {
+      S.chat.push({ role: 'user', content: q });
+      renderZigga(); $('#chatIn').value = ''; $('#chatSend').disabled = true;
+      const log2 = $('#chatLog'); log2.insertAdjacentHTML('beforeend', '<div class="bubble bot thinking">Consultando la base de datos…</div>'); log2.scrollTop = log2.scrollHeight;
+      try {
+        const r = await api('POST', '/api/zigga/chat', { messages: S.chat.map(({ role, content }) => ({ role, content })) });
+        S.chat.push({ role: 'assistant', content: r.reply, consultas: r.consultas });
+      } catch (e) { S.chat.push({ role: 'assistant', content: `No pude responder: ${e.message}`, error: true }); }
+      renderZigga(); setTimeout(() => $('#chatIn')?.focus(), 50);
+    }
+  }
+  function chatBubble(m) {
+    if (m.role === 'user') return `<div class="bubble me">${h(m.content)}</div>`;
+    const q = (m.consultas || []).filter((c) => c.sql);
+    return `<div class="bubble bot ${m.error ? 'err' : ''}">${md(m.content)}${q.length ? `<details class="chat-q"><summary>${q.length} consulta${q.length === 1 ? '' : 's'} a la base de datos</summary>${q.map((c) => `<div class="small">${c.proposito ? `<div class="muted">${h(c.proposito)}</div>` : ''}<pre class="code">${h(c.sql)}</pre><div class="faint">${c.error ? `Error: ${h(c.error)}` : `${c.filas} fila(s)`}</div></div>`).join('')}</details>` : ''}</div>`;
+  }
+
   // ---------- equipo ----------
   function renderEquipo() {
     const count = (id) => S.leads.filter((l) => l.responsable_id === id).length;
@@ -717,6 +771,15 @@
   }
 
   // ---------- ajustes ----------
+  const CAMPOS_REGLA = { respuesta: ['Respuesta del formulario', null], pais: ['País (código)', null], plataforma: ['Plataforma', ['fb', 'ig']], anuncio: ['Anuncio contiene', null], campana: ['Campaña contiene', null], correo: ['Correo', ['corporativo', 'gratuito', 'sin correo']], nombre: ['Nombre', ['completo', 'incompleto']], hora: ['Hora de llegada', ['laboral', 'noche']], dia: ['Día de llegada', ['entre semana', 'fin de semana']], repetido: ['Repetido', ['si', 'no']] };
+  function ruleRow(r) {
+    const campo = CAMPOS_REGLA[r.campo] ? r.campo : 'respuesta'; const [, valores] = CAMPOS_REGLA[campo];
+    const sel = `<select class="input" data-f="campo">${Object.entries(CAMPOS_REGLA).map(([k, [lbl]]) => `<option value="${k}" ${k === campo ? 'selected' : ''}>${lbl}</option>`).join('')}</select>`;
+    const preg = campo === 'respuesta' ? `<input class="input" data-f="pregunta" value="${h(r.pregunta || '')}" placeholder="la pregunta contiene…">` : '';
+    const val = valores ? `<select class="input" data-f="valor">${valores.map((v) => `<option ${norm(v) === norm(r.valor) ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<input class="input" data-f="valor" value="${h(r.valor || '')}" placeholder="${campo === 'respuesta' ? 'la respuesta contiene…' : campo === 'pais' ? 'MX, US, CO…' : 'texto…'}">`;
+    return `<div class="rule-row ${campo === 'respuesta' ? 'with-q' : ''}">${sel}${preg}${val}<input class="input num" data-f="puntos" type="number" value="${r.puntos ?? 0}"><button class="btn ghost icon" data-rm title="Quitar">${ICONS.close}</button></div>`;
+  }
+  const norm = (t) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   function renderAjustes() {
     const c = S.config;
     const stageEditor = (area) => `<div class="stack" style="gap:6px" id="st_${area}">${c.etapas[area].map((s, i) => `<div class="stage-row" data-i="${i}">
@@ -744,13 +807,14 @@
           <label class="field">Peso de la frescura<input class="input num" id="pFresc" type="number" min="0" max="100" value="${c.prioridad.peso_frescura}"></label>
           <label class="field">La frescura llega a 0 a las (horas)<input class="input num" id="pHoras" type="number" min="1" max="240" value="${c.prioridad.horas_frescura}"></label>
         </div>
-        <div class="eyebrow">Reglas del formulario</div>
-        <div class="stack" style="gap:6px" id="pReglas">${c.prioridad.reglas.map((r) => `<div class="rule-row"><input class="input" data-f="pregunta" value="${h(r.pregunta)}" placeholder="la pregunta contiene…"><input class="input" data-f="valor" value="${h(r.valor)}" placeholder="la respuesta contiene…"><input class="input num" data-f="puntos" type="number" value="${r.puntos}"><button class="btn ghost icon" data-rm title="Quitar">${ICONS.close}</button></div>`).join('')}
+        <div class="eyebrow">Reglas (formulario y perfil del lead)</div>
+        <div class="stack" style="gap:6px" id="pReglas">${c.prioridad.reglas.map(ruleRow).join('')}
           <div><button class="btn sm" id="pAddRule">+ Agregar regla</button> <button class="btn sm ghost" id="pRecalc">Recalcular prioridades ahora</button></div></div>
-        <p class="small faint" style="margin:0">Se compara sin tildes ni mayúsculas. Ejemplo: pregunta "capital", respuesta "más de $50,000", 50 puntos.</p>
+        <p class="small faint" style="margin:0">Se compara sin tildes ni mayúsculas. "Respuesta del formulario" usa la pregunta que contiene… y la respuesta que contiene…; los demás campos se evalúan solos con lo que llega de Meta (país, correo, nombre, hora de llegada, repetido).</p>
       </div>
       <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div></div>`;
-    $('#pAddRule').onclick = () => { const list = $('#pReglas'); const div = document.createElement('div'); div.className = 'rule-row'; div.innerHTML = `<input class="input" data-f="pregunta" placeholder="la pregunta contiene…"><input class="input" data-f="valor" placeholder="la respuesta contiene…"><input class="input num" data-f="puntos" type="number" value="10"><button class="btn ghost icon" data-rm title="Quitar">${ICONS.close}</button>`; list.insertBefore(div, list.lastElementChild); div.querySelector('input').focus(); };
+    $('#pAddRule').onclick = () => { const list = $('#pReglas'); const tpl = document.createElement('div'); tpl.innerHTML = ruleRow({ campo: 'respuesta', pregunta: '', valor: '', puntos: 10 }); const div = tpl.firstElementChild; list.insertBefore(div, list.lastElementChild); div.querySelector('input').focus(); };
+    V.addEventListener('change', (e) => { const sel = e.target.closest('[data-f=campo]'); if (!sel) return; const row = sel.closest('.rule-row'); const r = { campo: sel.value, pregunta: row.querySelector('[data-f=pregunta]')?.value || '', valor: '', puntos: row.querySelector('[data-f=puntos]').value }; const tpl = document.createElement('div'); tpl.innerHTML = ruleRow(r); row.replaceWith(tpl.firstElementChild); });
     $('#pRecalc').onclick = async () => { try { const r = await api('POST', '/api/prioridad/recalcular'); toast(`${r.recalculados} lead(s) recalculado(s)`, 'good'); await load(); } catch (e) { fail(e); } };
     V.addEventListener('click', (e) => {
       const rr = e.target.closest('.rule-row'); if (rr && e.target.closest('[data-rm]')) { rr.remove(); return; }
@@ -766,7 +830,7 @@
       try {
         await api('PUT', '/api/settings', { empresa: $('#sEmpresa').value, moneda: $('#sMoneda').value.toUpperCase(), motivos_perdida: $('#sMotivos').value.split('\n'), etapas: { FTD: read('FTD'), RET: read('RET') },
           siguiente: { reintento_minutos: $('#sReintento').value, max_intentos: $('#sMaxInt').value }, reparto: { activo: $('#sRepActivo').checked, tope_diario: $('#sTope').value, reasignar_minutos: $('#sReasignar').value },
-          prioridad: { max_reglas: $('#pMaxReglas').value, peso_historial: $('#pHist').value, peso_frescura: $('#pFresc').value, horas_frescura: $('#pHoras').value, reglas: $$('#pReglas .rule-row').map((r) => ({ pregunta: r.querySelector('[data-f=pregunta]').value, valor: r.querySelector('[data-f=valor]').value, puntos: r.querySelector('[data-f=puntos]').value })) } });
+          prioridad: { max_reglas: $('#pMaxReglas').value, peso_historial: $('#pHist').value, peso_frescura: $('#pFresc').value, horas_frescura: $('#pHoras').value, reglas: $$('#pReglas .rule-row').map((r) => ({ campo: r.querySelector('[data-f=campo]').value, pregunta: r.querySelector('[data-f=pregunta]')?.value || '', valor: r.querySelector('[data-f=valor]').value, puntos: r.querySelector('[data-f=puntos]').value })) } });
         toast('Ajustes guardados', 'good'); await load();
       } catch (e) { fail(e); }
     };

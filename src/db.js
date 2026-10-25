@@ -29,10 +29,15 @@ export const DEFAULT_SETTINGS = {
   prioridad: {
     max_reglas: 50, peso_historial: 30, peso_frescura: 20, horas_frescura: 10,
     reglas: [
-      { pregunta: 'capital', valor: 'más de $50,000', puntos: 50 },
-      { pregunta: 'capital', valor: '$10,000-$50,000', puntos: 35 },
-      { pregunta: 'capital', valor: 'menos de $10,000', puntos: 15 },
-      { pregunta: 'proceso legal', valor: 'no', puntos: 5 },
+      { campo: 'respuesta', pregunta: 'capital', valor: 'más de $50,000', puntos: 35 },
+      { campo: 'respuesta', pregunta: 'capital', valor: '$10,000-$50,000', puntos: 25 },
+      { campo: 'respuesta', pregunta: 'capital', valor: 'menos de $10,000', puntos: 10 },
+      { campo: 'pais', valor: 'US', puntos: 8 },
+      { campo: 'pais', valor: 'MX', puntos: 5 },
+      { campo: 'correo', valor: 'corporativo', puntos: 5 },
+      { campo: 'nombre', valor: 'completo', puntos: 3 },
+      { campo: 'hora', valor: 'laboral', puntos: 4 },
+      { campo: 'repetido', valor: 'si', puntos: 8 },
     ],
   },
 };

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, findStage, forwardStage, DEFAULT_SETTINGS } from './db.js';
 import { startReparto, repartirLeads } from './reparto.js';
 import { startPrioridad, recalcularPrioridades } from './prioridad.js';
+import { iaConfig, chatZigga, consultarSQL } from './ia.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, publicUser,
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
@@ -158,6 +159,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     sin_asignar: isAdmin(req.user) ? db.prepare(`SELECT COUNT(*) AS n FROM leads WHERE responsable_id IS NULL AND ${areaSql}`).get(...areas).n : 0,
     meta: isAdmin(req.user) ? metaStatus(db) : null,
     webhook_configurado: !!WEBHOOK_KEY,
+    ia: { activa: iaConfig().activa, modelo: iaConfig().model },
     server_time: nowIso(),
   });
 });
@@ -362,6 +364,29 @@ app.post('/api/leads/:id/notas', requireAuth, (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+// ---------- Zigga IA: chat con la base de datos ----------
+const chatHits = new Map();
+app.post('/api/zigga/chat', requireAuth, async (req, res) => {
+  if (!iaConfig().activa) return res.status(503).json({ error: 'Zigga IA no está activado: falta ANTHROPIC_API_KEY en el servidor.' });
+  const now = Date.now(); const hits = (chatHits.get(req.user.id) || []).filter((t) => now - t < 60000);
+  if (hits.length >= 20) return res.status(429).json({ error: 'Demasiadas preguntas seguidas. Espera un minuto.' });
+  hits.push(now); chatHits.set(req.user.id, hits);
+  const messages = Array.isArray(req.body?.messages) ? req.body.messages.filter((m) => m && typeof m.content === 'string' && m.content.trim()) : [];
+  if (!messages.length) return res.status(400).json({ error: 'Escribe una pregunta.' });
+  try {
+    const out = await chatZigga(DB_FILE, db, req.user, messages);
+    res.json(out);
+  } catch (e) {
+    console.error('[ia]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Consulta directa de prueba (solo administrador): útil para verificar el acotamiento.
+app.post('/api/zigga/sql', requireAdmin, (req, res) => {
+  try { res.json({ rows: consultarSQL(DB_FILE, db, req.user, req.body?.sql) }); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ---------- marcador del equipo ----------
 app.get('/api/marcador', requireAuth, (req, res) => {
   const config = getConfig(db);
@@ -552,7 +577,7 @@ app.put('/api/settings', requireAdmin, (req, res) => {
     next.prioridad = {
       max_reglas: int(pr.max_reglas, 0, 100, current.prioridad.max_reglas), peso_historial: int(pr.peso_historial, 0, 100, current.prioridad.peso_historial),
       peso_frescura: int(pr.peso_frescura, 0, 100, current.prioridad.peso_frescura), horas_frescura: int(pr.horas_frescura, 1, 240, current.prioridad.horas_frescura),
-      reglas: Array.isArray(pr.reglas) ? pr.reglas.map((r) => ({ pregunta: str(r?.pregunta, 80), valor: str(r?.valor, 80), puntos: int(r?.puntos, -100, 100, 0) })).filter((r) => r.pregunta && r.valor).slice(0, 60) : current.prioridad.reglas,
+      reglas: Array.isArray(pr.reglas) ? pr.reglas.map((r) => ({ campo: ['respuesta', 'pais', 'plataforma', 'anuncio', 'campana', 'correo', 'nombre', 'hora', 'dia', 'repetido'].includes(r?.campo) ? r.campo : 'respuesta', pregunta: str(r?.pregunta, 80), valor: str(r?.valor, 80), puntos: int(r?.puntos, -100, 100, 0) })).filter((r) => r.valor && (r.campo !== 'respuesta' || r.pregunta)).slice(0, 80) : current.prioridad.reglas,
     };
   }
   if (b.reparto && typeof b.reparto === 'object') next.reparto = { activo: !!b.reparto.activo, tope_diario: int(b.reparto.tope_diario, 0, 1000, current.reparto.tope_diario), reasignar_minutos: int(b.reparto.reasignar_minutos, 0, 1440, current.reparto.reasignar_minutos) };
