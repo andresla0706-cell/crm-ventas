@@ -61,7 +61,12 @@
   const stages = (area) => S.config?.etapas?.[area] || [];
   const stage = (lead) => stages(lead.area).find((s) => s.id === lead.etapa) || { id: lead.etapa, nombre: lead.etapa, tipo: 'abierta' };
   const isAdmin = () => S.user?.role === 'admin';
-  const areaLabel = (a) => (a === 'RET' ? 'Retención' : a === 'AMBAS' ? 'Ambas' : 'FTD');
+  const areaLabel = (a) => (a === 'RET' ? 'Retención' : a === 'AMBAS' ? 'FTD + Retención' : 'FTD');
+  const userAreas = (u) => (u?.area === 'AMBAS' ? ['FTD', 'RET'] : u?.area ? [u.area] : []);
+  const userHasArea = (u, a) => userAreas(u).includes(a);
+  const myAreas = () => userAreas(S.user);
+  const bothAreas = () => S.user?.area === 'AMBAS';
+  const usersForArea = (a) => S.users.filter((u) => u.activo !== false && userHasArea(u, a));
   const origenLabel = (l) => (l.origen_tipo === 'manual' ? 'Manual' : l.origen_tipo === 'import' ? 'Meta (archivo)' : l.origen_tipo === 'webhook' ? 'Webhook' : 'Meta');
 
   // ---------- API ----------
@@ -88,7 +93,7 @@
     $('#app').hidden = true; $('#login').hidden = false; $('#overlay').innerHTML = '';
     setTimeout(() => $('#loginUser').focus(), 50);
     fetch('/api/public-config', { credentials: 'same-origin' }).then((r) => r.json()).then((c) => {
-      const e = empresaName(c); $('#loginEmpresa').textContent = e || 'Entrar'; document.title = e ? `Zigga · ${e}` : 'Zigga';
+      const e = empresaName(c); $('#loginEmpresa').textContent = e || 'Bienvenido'; document.title = e ? `Zigga · ${e}` : 'Zigga';
     }).catch(() => {});
   }
   $('#loginForm').addEventListener('submit', async (e) => {
@@ -114,7 +119,7 @@
   async function start() {
     await load();
     $('#login').hidden = true; $('#app').hidden = false;
-    if (S.user.area !== 'AMBAS' && !isAdmin()) { S.area = S.user.area; S.metricFilters.area = S.user.area; }
+    if (!bothAreas()) { S.area = myAreas()[0] || 'FTD'; S.metricFilters.area = S.area; }
     if (!location.hash) location.hash = '#tablero';
     route();
     clearInterval(S.pollTimer);
@@ -152,7 +157,7 @@
     const sub = $('#brandSub'); sub.textContent = empresa; sub.hidden = !empresa;
     document.title = empresa ? `Zigga · ${empresa}` : 'Zigga';
     $('#meAvatar').textContent = initials(S.user.nombre); $('#meName').textContent = S.user.nombre;
-    $('#meRole').textContent = isAdmin() ? 'Administrador' : `Vendedor · ${areaLabel(S.user.area)}`;
+    $('#meRole').textContent = `${isAdmin() ? 'Administrador' : 'Vendedor'} · ${areaLabel(S.user.area)}`;
     const badges = { tareas: taskBadge(), lista: isAdmin() ? S.sinAsignar : 0 };
     const nav = VIEWS.filter((v) => !v.admin || isAdmin());
     $('#nav').innerHTML = nav.map((v) => `<button class="navitem ${S.view === v.id ? 'on' : ''}" data-go="${v.id}">${ICONS[v.id]}<span>${v.label}</span>${badges[v.id] ? `<span class="badge ${v.id === 'lista' ? 'neutral' : ''}" title="${v.id === 'lista' ? 'Leads sin asignar' : 'Tareas vencidas o para hoy'}">${badges[v.id]}</span>` : ''}</button>`).join('');
@@ -176,7 +181,7 @@
 
   function renderTopbar() {
     const titles = { tablero: 'Tablero', lista: 'Lista de leads', tareas: 'Tareas y recordatorios', metricas: 'Métricas', equipo: 'Equipo', importar: 'Importar leads', ajustes: 'Ajustes', cuenta: 'Mi cuenta' };
-    const showArea = ['tablero', 'lista'].includes(S.view) && (isAdmin() || S.user.area === 'AMBAS');
+    const showArea = ['tablero', 'lista'].includes(S.view) && bothAreas();
     const showSearch = ['tablero', 'lista'].includes(S.view);
     $('#topbar').innerHTML = `
       <h1>${titles[S.view]}</h1>
@@ -202,7 +207,7 @@
     let leads = S.leads.filter((l) => l.area === area && matchesQ(l));
     if (S.boardFilter.responsable === 'none') leads = leads.filter((l) => l.responsable_id == null);
     else if (S.boardFilter.responsable) leads = leads.filter((l) => l.responsable_id === Number(S.boardFilter.responsable));
-    const sellers = S.users.filter((u) => u.activo !== false);
+    const sellers = usersForArea(area);
     const filters = isAdmin() ? `<div class="filters">
         <select class="input" id="boardResp"><option value="">Todos los responsables</option><option value="none" ${S.boardFilter.responsable === 'none' ? 'selected' : ''}>Sin asignar (${S.leads.filter((l) => l.area === area && l.responsable_id == null).length})</option>
         ${sellers.map((u) => `<option value="${u.id}" ${String(S.boardFilter.responsable) === String(u.id) ? 'selected' : ''}>${h(u.nombre)}</option>`).join('')}</select>
@@ -292,7 +297,7 @@
         ${isAdmin() ? `<a class="btn sm" href="/api/export.csv" style="margin-left:auto">Exportar CSV</a>` : ''}
       </div>
       ${sel.size ? `<div class="bulkbar"><b>${sel.size} seleccionado${sel.size === 1 ? '' : 's'}</b>
-        <select class="input" id="bulkResp" style="width:auto"><option value="">Asignar a…</option><option value="none">Sin asignar</option>${S.users.filter((u) => u.activo).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select>
+        <select class="input" id="bulkResp" style="width:auto"><option value="">Asignar a…</option><option value="none">Sin asignar</option>${usersForArea(area).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select>
         <button class="btn sm" id="bulkClear">Quitar selección</button></div>` : ''}
       <div class="tablewrap"><table>
         <thead><tr>${selectable ? `<th style="width:34px"><input type="checkbox" id="selAll" ${leads.length && leads.every((l) => sel.has(l.id)) ? 'checked' : ''}></th>` : ''}
@@ -321,7 +326,7 @@
     $('#bulkClear')?.addEventListener('click', () => { sel.clear(); renderLista(); });
     $('#bulkResp')?.addEventListener('change', async (e) => {
       const v = e.target.value; if (!v) return;
-      try { const r = await api('POST', '/api/leads/assign', { ids: [...sel], responsable_id: v === 'none' ? null : Number(v) }); toast(`${r.actualizados} lead(s) asignado(s)`); sel.clear(); await load(); }
+      try { const r = await api('POST', '/api/leads/assign', { ids: [...sel], responsable_id: v === 'none' ? null : Number(v) }); toast(r.aviso || `${r.actualizados} lead(s) asignado(s)`, r.aviso ? 'bad' : ''); sel.clear(); await load(); }
       catch (err) { fail(err); }
     });
   }
@@ -403,7 +408,7 @@
     const table = (rows) => `<div class="tablewrap mini"><table><thead><tr><th></th><th>Leads</th><th>Calif.</th><th>Clientes</th><th>Tasa cierre</th><th>Monto</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${h(r.k)}</td><td class="num">${r.n}</td><td class="num">${r.cal}</td><td class="num">${r.cli}</td><td class="num">${pct(r.cli, r.n)}</td><td class="num">${money(r.monto)}</td></tr>`).join('') || '<tr><td colspan="6" class="faint">Sin datos</td></tr>'}</tbody></table></div>`;
     const areaForStages = f.area === 'AMBAS' ? 'FTD' : f.area;
     const stageRows = stages(areaForStages).map((s) => ({ k: s.nombre, n: inPeriod.filter((l) => l.area === areaForStages && l.etapa === s.id).length, cal: 0, cli: 0 }));
-    const canFilterArea = isAdmin() || S.user.area === 'AMBAS';
+    const canFilterArea = bothAreas();
     fresh().innerHTML = `
       <div class="filters">
         <div class="seg" id="mPer">${[['7', '7 días'], ['30', '30 días'], ['90', '90 días'], ['todo', 'Todo']].map(([v, t]) => `<button class="${f.periodo === v ? 'on' : ''}" data-v="${v}">${t}</button>`).join('')}</div>
@@ -440,9 +445,9 @@
     V.innerHTML = `
       <div class="filters"><button class="btn primary" id="newUserBtn">+ Nuevo usuario</button>
         <span class="muted small">Comparte la dirección de este CRM con cada vendedor junto con su usuario y contraseña. Al entrar por primera vez deberá cambiarla.</span></div>
-      <div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Área</th><th>Leads</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead>
+      <div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Acceso</th><th>Leads</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead>
       <tbody>${S.users.map((u) => `<tr><td class="name"><span class="avatar">${initials(u.nombre)}</span> ${h(u.nombre)}</td><td class="num small">${h(u.username)}</td>
-        <td>${u.role === 'admin' ? '<span class="chip accent">Administrador</span>' : 'Vendedor'}</td><td>${u.area === 'RET' ? '<span class="chip ret">Retención</span>' : u.area === 'AMBAS' ? 'Ambas' : 'FTD'}</td>
+        <td>${u.role === 'admin' ? '<span class="chip accent">Administrador</span>' : 'Vendedor'}</td><td>${userAreas(u).map((a) => `<span class="chip ${a === 'RET' ? 'ret' : ''}">${a === 'RET' ? 'Retención' : 'FTD'}</span>`).join(' ')}</td>
         <td class="num">${count(u.id)}</td><td class="small muted">${u.ultimo_acceso ? ago(u.ultimo_acceso) : 'Nunca'}</td>
         <td>${u.activo ? '<span class="chip good">Activo</span>' : '<span class="chip bad">Inactivo</span>'}</td>
         <td><button class="btn sm" data-edit="${u.id}">Editar</button></td></tr>`).join('')}</tbody></table></div>`;
@@ -457,14 +462,18 @@
         <label class="field">Usuario (para entrar)<input class="input" id="uUser" value="${h(u?.username || '')}" ${u ? 'disabled' : ''} autocapitalize="off" placeholder="ej. laura"></label>
         <label class="field">${u ? 'Nueva contraseña (opcional)' : 'Contraseña'}<input class="input" id="uPass" type="text" autocomplete="off" placeholder="mínimo 8 caracteres"></label>
         <label class="field">Rol<select class="input" id="uRole" ${isMe ? 'disabled' : ''}><option value="vendedor" ${u?.role === 'vendedor' ? 'selected' : ''}>Vendedor</option><option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>Administrador</option></select></label>
-        <label class="field">Área<select class="input" id="uArea"><option value="FTD" ${u?.area === 'FTD' ? 'selected' : ''}>FTD</option><option value="RET" ${u?.area === 'RET' ? 'selected' : ''}>Retención</option><option value="AMBAS" ${u?.area === 'AMBAS' ? 'selected' : ''}>Ambas</option></select></label>
+        <div class="field" style="display:grid;gap:6px"><span>Acceso a áreas</span>
+          <label class="check"><input type="checkbox" id="uFTD" ${!u || userHasArea(u, 'FTD') ? 'checked' : ''} ${isMe ? 'disabled' : ''}> FTD</label>
+          <label class="check"><input type="checkbox" id="uRET" ${u && userHasArea(u, 'RET') ? 'checked' : ''} ${isMe ? 'disabled' : ''}> Retención</label></div>
         ${u && !isMe ? `<label class="check" style="align-self:end;padding-bottom:8px"><input type="checkbox" id="uActivo" ${u.activo ? 'checked' : ''}> Usuario activo</label>` : ''}
       </div>
-      <p class="small muted">Un vendedor solo ve los leads que le asignes. Un administrador ve todo, asigna leads y administra el equipo.</p>
+      <p class="small muted">Cada persona solo entra a las áreas que marques: quien tiene solo FTD no ve el tablero, los leads ni las métricas de Retención. Un vendedor además solo ve los leads que le asignes; un administrador ve todos los de sus áreas, asigna y administra el equipo.</p>
       <div class="actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="uOk">${u ? 'Guardar' : 'Crear usuario'}</button></div>`);
     $('#uOk').onclick = async () => {
       try {
-        const body = { nombre: $('#uNombre').value, role: $('#uRole').value, area: $('#uArea').value };
+        const ftd = $('#uFTD').checked, ret = $('#uRET').checked;
+        if (!isMe && !ftd && !ret) throw new Error('Marca al menos un área.');
+        const body = { nombre: $('#uNombre').value, role: $('#uRole').value, area: isMe ? u.area : (ftd && ret ? 'AMBAS' : ret ? 'RET' : 'FTD') };
         if ($('#uPass').value) body.password = $('#uPass').value;
         if (u) { if (!isMe) body.activo = $('#uActivo').checked; await api('PATCH', `/api/users/${u.id}`, body); }
         else { body.username = $('#uUser').value; body.password = $('#uPass').value; await api('POST', '/api/users', body); }
@@ -597,7 +606,7 @@
 
   function newLeadModal() {
     const canPick = isAdmin();
-    const area = canPick || S.user.area === 'AMBAS' ? S.area : S.user.area;
+    const area = bothAreas() ? S.area : (myAreas()[0] || 'FTD');
     modal(`<h2>Nuevo lead</h2>
       <div class="field-grid">
         <label class="field">Nombre *<input class="input" id="nNombre" autofocus></label>
@@ -606,15 +615,18 @@
         <label class="field">País<input class="input" id="nPais" placeholder="CO, MX, EC…" maxlength="40"></label>
         <label class="field">Ciudad<input class="input" id="nCiudad"></label>
         <label class="field">Cuánto va a pagar (${h(S.config.moneda)})<input class="input" id="nMonto" inputmode="decimal" placeholder="0"></label>
-        ${canPick || S.user.area === 'AMBAS' ? `<label class="field">Área<select class="input" id="nArea"><option value="FTD" ${area === 'FTD' ? 'selected' : ''}>FTD</option><option value="RET" ${area === 'RET' ? 'selected' : ''}>Retención</option></select></label>` : ''}
+        ${bothAreas() ? `<label class="field">Área<select class="input" id="nArea"><option value="FTD" ${area === 'FTD' ? 'selected' : ''}>FTD</option><option value="RET" ${area === 'RET' ? 'selected' : ''}>Retención</option></select></label>` : ''}
         <label class="field">Etapa<select class="input" id="nEtapa">${stages(area).map((s) => `<option value="${s.id}">${h(s.nombre)}</option>`).join('')}</select></label>
-        ${canPick ? `<label class="field">Responsable<select class="input" id="nResp"><option value="">Sin asignar</option>${S.users.filter((u) => u.activo).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select></label>` : ''}
+        ${canPick ? `<label class="field">Responsable<select class="input" id="nResp"><option value="">Sin asignar</option>${usersForArea(area).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select></label>` : ''}
         <label class="field">Próxima acción<input class="input" id="nPA" placeholder="Llamar, enviar info…"></label>
         <label class="field">Fecha de la próxima acción<input class="input" id="nPF" type="datetime-local"></label>
       </div>
       <label class="field">Notas<textarea class="input" id="nNotas" rows="2"></textarea></label>
       <div class="actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="nOk">Crear lead</button></div>`, { wide: true });
-    $('#nArea')?.addEventListener('change', (e) => { $('#nEtapa').innerHTML = stages(e.target.value).map((s) => `<option value="${s.id}">${h(s.nombre)}</option>`).join(''); });
+    $('#nArea')?.addEventListener('change', (e) => {
+      $('#nEtapa').innerHTML = stages(e.target.value).map((s) => `<option value="${s.id}">${h(s.nombre)}</option>`).join('');
+      if ($('#nResp')) $('#nResp').innerHTML = `<option value="">Sin asignar</option>${usersForArea(e.target.value).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}`;
+    });
     $('#nOk').onclick = async () => {
       try {
         const d = await api('POST', '/api/leads', { nombre: $('#nNombre').value, whatsapp: $('#nWa').value, correo: $('#nCorreo').value, pais: $('#nPais').value.toUpperCase().length === 2 ? $('#nPais').value.toUpperCase() : $('#nPais').value, ciudad: $('#nCiudad').value, monto: $('#nMonto').value, area: $('#nArea')?.value || area, etapa: $('#nEtapa').value, responsable_id: $('#nResp')?.value || null, proxima_accion: $('#nPA').value, proxima_fecha: fromLocalInput($('#nPF').value), notas: $('#nNotas').value });
@@ -647,7 +659,8 @@
     const root = document.createElement('div'); root.id = 'drawerRoot'; document.body.appendChild(root);
     const waDigits = (l.whatsapp || '').replace(/\D/g, '');
     const leadTasks = S.tasks.filter((t) => t.lead_id === l.id && !t.hecho);
-    const sellers = S.users.filter((u) => u.activo !== false);
+    const sellers = usersForArea(l.area);
+    if (l.responsable_id && !sellers.some((u) => u.id === l.responsable_id)) { const r = userById(l.responsable_id); if (r) sellers.push(r); }
     root.innerHTML = `<div class="scrim" id="drawerScrim"></div><aside class="drawer" aria-label="Ficha del lead">
       <header>
         <div class="title">
@@ -741,9 +754,10 @@
       if (c) { try { await navigator.clipboard.writeText(c.dataset.copy); toast('Número copiado'); } catch { toast(c.dataset.copy); } return; }
     });
     $('#toRet') && ($('#toRet').onclick = () => {
-      const ret = S.users.filter((u) => u.activo && (u.area === 'RET' || u.area === 'AMBAS'));
+      const ret = usersForArea('RET');
+      const keepOk = l.responsable_id && userHasArea(userById(l.responsable_id), 'RET');
       modal(`<h2>Pasar a Retención</h2><p class="muted">${h(l.nombre)} entrará al tablero de Retención en su primera etapa, con todo su historial.</p>
-        ${isAdmin() ? `<label class="field">Responsable en Retención<select class="input" id="rResp"><option value="">${h(uname(l.responsable_id))} (mantener)</option>${ret.map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select></label>` : ''}
+        ${isAdmin() ? `<label class="field">Responsable en Retención<select class="input" id="rResp"><option value="">${keepOk ? `${h(uname(l.responsable_id))} (mantener)` : 'Sin asignar (lo entregas después)'}</option>${ret.map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}</select></label>` : (userHasArea(S.user, 'RET') ? '' : '<p class="small muted">Como no tienes acceso a Retención, el lead quedará sin asignar para que el administrador lo entregue al equipo de Retención.</p>')}
         <div class="actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="rOk">Pasar a Retención</button></div>`);
       $('#rOk').onclick = async () => { try { const d = await api('POST', `/api/leads/${l.id}/retencion`, { responsable_id: $('#rResp')?.value || null }); closeModal(); replaceLead(d.lead); toast('Lead en Retención', 'good'); } catch (err) { fail(err); } };
     });

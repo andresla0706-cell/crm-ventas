@@ -19,18 +19,41 @@
 </head>
 <body>
 <div id="login" hidden>
-  <form class="login-card" id="loginForm" autocomplete="on">
-    <div class="brand"><span class="mark">Z</span><span>Zigga</span></div>
-    <div>
-      <h1 id="loginEmpresa">Entrar</h1>
-      <p class="muted" style="margin:4px 0 0">Sigue cada lead hasta cerrarlo.</p>
+  <section class="login-hero" aria-hidden="true">
+    <div class="hero-inner">
+      <div class="brand big"><span class="mark">Z</span><span>Zigga</span></div>
+      <h2 class="hero-title">Sigue cada lead<br>hasta cerrarlo.</h2>
+      <p class="hero-sub">Leads de Meta, tablero por etapas, tareas y métricas del equipo. Todo en un solo lugar.</p>
+      <div class="pipe">
+        <div class="pcol"><span class="plabel">Nuevo</span></div>
+        <div class="pcol"><span class="plabel">Contactado</span></div>
+        <div class="pcol"><span class="plabel">Calificado</span></div>
+        <div class="pcol win"><span class="plabel">Cliente</span></div>
+        <div class="pcard c1"><i></i><i></i></div>
+        <div class="pcard c2"><i></i><i></i></div>
+        <div class="pcard c3"><i></i><i></i></div>
+      </div>
+      <div class="hero-stats">
+        <div><b>FTD</b><span>Primer cierre</span></div>
+        <div><b>Retención</b><span>Clientes activos</span></div>
+        <div><b>Meta Ads</b><span>Leads automáticos</span></div>
+      </div>
     </div>
-    <label class="field">Usuario<input class="input" id="loginUser" name="username" autocomplete="username" autocapitalize="off" required></label>
-    <label class="field">Contraseña<input class="input" id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
-    <div id="loginError" class="small" style="color:var(--bad);min-height:18px;font-weight:600"></div>
-    <button class="btn primary" type="submit" id="loginBtn">Entrar</button>
-    <div class="small faint" style="text-align:center">Zigga · by DataLab Ads</div>
-  </form>
+  </section>
+  <section class="login-side">
+    <form class="login-card" id="loginForm" autocomplete="on">
+      <div class="brand small-only"><span class="mark">Z</span><span>Zigga</span></div>
+      <div>
+        <span class="eyebrow" id="loginEmpresa">Bienvenido</span>
+        <h1>Entrar a tu cuenta</h1>
+      </div>
+      <label class="field">Usuario<input class="input lg" id="loginUser" name="username" autocomplete="username" autocapitalize="off" required></label>
+      <label class="field">Contraseña<input class="input lg" id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
+      <div id="loginError" class="small" style="color:var(--bad);min-height:18px;font-weight:600"></div>
+      <button class="btn primary lg" type="submit" id="loginBtn">Entrar</button>
+      <div class="small faint" style="text-align:center">Zigga · by DataLab Ads</div>
+    </form>
+  </section>
 </div>
 
 <div id="app" hidden>

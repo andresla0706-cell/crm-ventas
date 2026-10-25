@@ -48,7 +48,12 @@ function act(leadId, tipo, texto, userId, de = null, a = null) {
 
 function isAdmin(u) { return u.role === 'admin'; }
 
+/** Áreas a las que el usuario tiene acceso (FTD, RET o ambas). */
+function allowedAreas(u) { return u.area === 'AMBAS' ? ['FTD', 'RET'] : [u.area]; }
+function hasArea(u, area) { return allowedAreas(u).includes(area); }
+
 function canSeeLead(user, lead) {
+  if (!hasArea(user, lead.area)) return false;
   if (isAdmin(user)) return true;
   return lead.responsable_id === user.id;
 }
@@ -129,14 +134,16 @@ app.post('/api/me/password', requireAuth, (req, res) => {
 app.get('/api/bootstrap', requireAuth, (req, res) => {
   const config = getConfig(db);
   const users = db.prepare('SELECT * FROM users ORDER BY nombre').all().map(publicUser);
+  const areas = allowedAreas(req.user);
+  const areaSql = `area IN (${areas.map(() => '?').join(',')})`;
   let leads, tasks;
   if (isAdmin(req.user)) {
-    leads = db.prepare('SELECT * FROM leads ORDER BY COALESCE(lead_creado_en, creado_en) DESC').all();
-    tasks = db.prepare('SELECT * FROM tasks ORDER BY fecha').all();
+    leads = db.prepare(`SELECT * FROM leads WHERE ${areaSql} ORDER BY COALESCE(lead_creado_en, creado_en) DESC`).all(...areas);
+    tasks = db.prepare(`SELECT * FROM tasks WHERE lead_id IS NULL OR lead_id IN (SELECT id FROM leads WHERE ${areaSql}) ORDER BY fecha`).all(...areas);
   } else {
-    leads = db.prepare('SELECT * FROM leads WHERE responsable_id = ? ORDER BY COALESCE(lead_creado_en, creado_en) DESC').all(req.user.id);
-    tasks = db.prepare(`SELECT * FROM tasks WHERE asignado_id = ? OR lead_id IN (SELECT id FROM leads WHERE responsable_id = ?) ORDER BY fecha`)
-      .all(req.user.id, req.user.id);
+    leads = db.prepare(`SELECT * FROM leads WHERE responsable_id = ? AND ${areaSql} ORDER BY COALESCE(lead_creado_en, creado_en) DESC`).all(req.user.id, ...areas);
+    tasks = db.prepare(`SELECT * FROM tasks WHERE (asignado_id = ? AND lead_id IS NULL) OR lead_id IN (SELECT id FROM leads WHERE responsable_id = ? AND ${areaSql}) ORDER BY fecha`)
+      .all(req.user.id, req.user.id, ...areas);
   }
   res.json({
     user: publicUser(req.user),
@@ -144,7 +151,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     users: isAdmin(req.user) ? users : users.filter((u) => u.activo).map(({ id, nombre, role, area }) => ({ id, nombre, role, area })),
     leads: leads.map(rowToLead),
     tasks: tasks.map((t) => ({ ...t, hecho: !!t.hecho })),
-    sin_asignar: isAdmin(req.user) ? db.prepare('SELECT COUNT(*) AS n FROM leads WHERE responsable_id IS NULL').get().n : 0,
+    sin_asignar: isAdmin(req.user) ? db.prepare(`SELECT COUNT(*) AS n FROM leads WHERE responsable_id IS NULL AND ${areaSql}`).get(...areas).n : 0,
     meta: isAdmin(req.user) ? metaStatus(db) : null,
     webhook_configurado: !!WEBHOOK_KEY,
     server_time: nowIso(),
@@ -163,11 +170,14 @@ app.post('/api/leads', requireAuth, (req, res) => {
   const b = req.body || {};
   const nombre = str(b.nombre, 200);
   if (!nombre) return res.status(400).json({ error: 'El nombre es obligatorio.' });
-  let area = ['FTD', 'RET'].includes(b.area) ? b.area : 'FTD';
+  let area = ['FTD', 'RET'].includes(b.area) ? b.area : allowedAreas(req.user)[0];
+  if (!hasArea(req.user, area)) return res.status(403).json({ error: `No tienes acceso al área ${area === 'RET' ? 'Retención' : area}.` });
   let responsable_id = b.responsable_id == null || b.responsable_id === '' ? null : Number(b.responsable_id);
-  if (!isAdmin(req.user)) {
-    responsable_id = req.user.id;
-    if (req.user.area !== 'AMBAS') area = req.user.area;
+  if (!isAdmin(req.user)) responsable_id = req.user.id;
+  if (responsable_id != null) {
+    const r = q.userById.get(responsable_id);
+    if (!r) return res.status(400).json({ error: 'Ese vendedor no existe.' });
+    if (!hasArea(r, area)) return res.status(400).json({ error: `${r.nombre} no tiene acceso al área ${area === 'RET' ? 'Retención' : area}.` });
   }
   const stages = config.etapas[area] || [];
   const etapa = stages.some((s) => s.id === b.etapa) ? b.etapa : stages[0]?.id;
@@ -214,6 +224,7 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
   let area = lead.area;
   if ('area' in b && ['FTD', 'RET'].includes(b.area) && b.area !== lead.area) {
     if (!isAdmin(req.user)) return res.status(403).json({ error: 'Solo el administrador cambia el área.' });
+    if (!hasArea(req.user, b.area)) return res.status(403).json({ error: `No tienes acceso al área ${b.area === 'RET' ? 'Retención' : b.area}.` });
     area = b.area;
     sets.area = area;
     if (area === 'RET' && !lead.retencion_en) sets.retencion_en = now;
@@ -234,7 +245,11 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
     const rid = b.responsable_id == null || b.responsable_id === '' ? null : Number(b.responsable_id);
     if (rid !== lead.responsable_id) {
       if (!isAdmin(req.user)) return res.status(403).json({ error: 'Solo el administrador asigna leads.' });
-      if (rid != null && !q.userById.get(rid)) return res.status(400).json({ error: 'Ese vendedor no existe.' });
+      if (rid != null) {
+        const r = q.userById.get(rid);
+        if (!r) return res.status(400).json({ error: 'Ese vendedor no existe.' });
+        if (!hasArea(r, area)) return res.status(400).json({ error: `${r.nombre} no tiene acceso al área ${area === 'RET' ? 'Retención' : area}.` });
+      }
       sets.responsable_id = rid;
     }
   }
@@ -272,34 +287,48 @@ app.post('/api/leads/:id/retencion', requireAuth, (req, res) => {
   const config = getConfig(db);
   const first = config.etapas.RET[0]?.id;
   if (!first) return res.status(400).json({ error: 'Retención no tiene etapas configuradas.' });
-  const rid = req.body?.responsable_id == null || req.body?.responsable_id === '' ? lead.responsable_id : Number(req.body.responsable_id);
+  let rid = req.body?.responsable_id == null || req.body?.responsable_id === '' ? lead.responsable_id : Number(req.body.responsable_id);
   if (rid !== lead.responsable_id && !isAdmin(req.user)) return res.status(403).json({ error: 'Solo el administrador asigna leads.' });
+  if (rid != null) {
+    const r = q.userById.get(rid);
+    if (!r) return res.status(400).json({ error: 'Ese vendedor no existe.' });
+    // Quien no tiene acceso a Retención no puede quedarse con el lead: queda sin asignar para que lo entregue el administrador.
+    if (!hasArea(r, 'RET')) {
+      if (req.body?.responsable_id != null && req.body?.responsable_id !== '') return res.status(400).json({ error: `${r.nombre} no tiene acceso a Retención.` });
+      rid = null;
+    }
+  }
   const now = nowIso();
   db.prepare('UPDATE leads SET area = ?, etapa = ?, responsable_id = ?, retencion_en = COALESCE(retencion_en, ?), perdido_en = NULL, motivo_perdida = NULL, actualizado_en = ? WHERE id = ?')
     .run('RET', first, rid, now, now, lead.id);
   act(lead.id, 'area', `Pasó a Retención (etapa ${stageName(config, 'RET', first)})`, req.user.id, 'FTD', 'RET');
-  if (rid !== lead.responsable_id) act(lead.id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar', req.user.id, userName(lead.responsable_id), userName(rid));
+  if (rid !== lead.responsable_id) act(lead.id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar: pendiente de entregar al equipo de Retención', req.user.id, userName(lead.responsable_id), userName(rid));
   res.json({ lead: rowToLead(q.leadById.get(lead.id)) });
 });
 
 app.post('/api/leads/assign', requireAdmin, (req, res) => {
   const ids = (req.body?.ids || []).map(Number).filter(Number.isFinite);
   const rid = req.body?.responsable_id == null || req.body?.responsable_id === '' ? null : Number(req.body.responsable_id);
-  if (rid != null && !q.userById.get(rid)) return res.status(400).json({ error: 'Ese vendedor no existe.' });
+  const target = rid != null ? q.userById.get(rid) : null;
+  if (rid != null && !target) return res.status(400).json({ error: 'Ese vendedor no existe.' });
   const upd = db.prepare('UPDATE leads SET responsable_id = ?, actualizado_en = ? WHERE id = ?');
-  let n = 0;
+  let n = 0, omitidos = 0;
   for (const id of ids) {
     const lead = q.leadById.get(id);
-    if (!lead || lead.responsable_id === rid) continue;
+    if (!lead || !canSeeLead(req.user, lead)) continue;
+    if (lead.responsable_id === rid) continue;
+    if (target && !hasArea(target, lead.area)) { omitidos++; continue; }
     upd.run(rid, nowIso(), id);
     act(id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar', req.user.id, userName(lead.responsable_id), userName(rid));
     n++;
   }
-  res.json({ actualizados: n });
+  res.json({ actualizados: n, omitidos, aviso: omitidos ? `${omitidos} lead(s) no se asignaron: ${target.nombre} no tiene acceso a su área.` : null });
 });
 
 app.delete('/api/leads/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id);
+  const lead = q.leadById.get(id);
+  if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
   db.prepare('DELETE FROM activities WHERE lead_id = ?').run(id);
   db.prepare('DELETE FROM tasks WHERE lead_id = ?').run(id);
   const r = db.prepare('DELETE FROM leads WHERE id = ?').run(id);
@@ -500,9 +529,10 @@ function flattenGraph(item) {
   return row;
 }
 
-app.get('/api/export.csv', requireAdmin, (_req, res) => {
+app.get('/api/export.csv', requireAdmin, (req, res) => {
   const config = getConfig(db);
-  const rows = db.prepare('SELECT * FROM leads ORDER BY id').all();
+  const areas = allowedAreas(req.user);
+  const rows = db.prepare(`SELECT * FROM leads WHERE area IN (${areas.map(() => '?').join(',')}) ORDER BY id`).all(...areas);
   const cols = ['id', 'nombre', 'correo', 'whatsapp', 'pais', 'ciudad', 'monto', 'area', 'etapa', 'responsable', 'proxima_accion', 'proxima_fecha', 'notas', 'motivo_perdida', 'origen_tipo', 'meta_lead_id', 'campaign_name', 'adset_name', 'ad_name', 'form_name', 'platform', 'respuestas', 'lead_creado_en', 'calificado_en', 'cliente_en', 'perdido_en', 'retencion_en'];
   const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = [cols.join(',')];
