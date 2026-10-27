@@ -2,6 +2,7 @@ import { getConfig, getSetting, setSetting, nowIso } from './db.js';
 import { repartirLeads } from './reparto.js';
 import { recalcularPrioridades } from './prioridad.js';
 import { notificarAdmins } from './push.js';
+import { buscarOriginal, registrarRepeticion, avisarRepeticion } from './repetidos.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -97,7 +98,7 @@ export function parseMetaTime(t) {
 export function insertNewLeads(db, leads, { origen, userId }) {
   const config = getConfig(db);
   const firstStage = config.etapas.FTD[0]?.id || 'nuevo';
-  const exists = db.prepare('SELECT id FROM leads WHERE meta_lead_id = ?');
+  const exists = db.prepare('SELECT 1 FROM leads WHERE meta_lead_id = ? UNION ALL SELECT 1 FROM repeticiones WHERE meta_lead_id = ?');
   const insert = db.prepare(`
     INSERT INTO leads (nombre, correo, whatsapp, pais, ciudad, area, etapa, origen_tipo, meta_lead_id,
       campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, form_id, form_name, platform,
@@ -108,12 +109,19 @@ export function insertNewLeads(db, leads, { origen, userId }) {
   const activity = db.prepare('INSERT INTO activities (lead_id, tipo, texto, user_id, en) VALUES (?, ?, ?, ?, ?)');
   let nuevos = 0, repetidos = 0, invalidos = 0;
   const ids = [];
+  const reps = [];
   const now = nowIso();
   db.exec('BEGIN');
   try {
     for (const l of leads) {
       if (!l.meta_lead_id) { invalidos++; continue; }
-      if (exists.get(l.meta_lead_id)) { repetidos++; continue; }
+      if (exists.get(l.meta_lead_id, l.meta_lead_id)) { repetidos++; continue; }
+      const original = buscarOriginal(db, { whatsapp: l.whatsapp, correo: l.correo });
+      if (original) {
+        const rep = registrarRepeticion(db, original, l, { origen, userId, meta_lead_id: l.meta_lead_id });
+        if (rep) reps.push(rep);
+        continue;
+      }
       const r = insert.run({
         nombre: l.nombre || 'Sin nombre', correo: l.correo ?? null, whatsapp: l.whatsapp ?? null,
         pais: l.pais ?? null, ciudad: l.ciudad ?? null, etapa: firstStage, origen,
@@ -143,7 +151,10 @@ export function insertNewLeads(db, leads, { origen, userId }) {
     const sinAsignar = ids.length - repartidos;
     if (sinAsignar > 0 && origen !== 'import') notificarAdmins(db, ['FTD'], { title: sinAsignar === 1 ? 'Llegó un lead nuevo sin asignar' : `${sinAsignar} leads nuevos sin asignar`, body: origen === 'meta' ? 'Vienen de Meta. Repártelos desde la lista.' : 'Llegaron por webhook. Repártelos desde la lista.', url: '/#lista', tag: 'sin-asignar' }).catch(() => {});
   }
-  return { nuevos, repetidos, invalidos, ids, repartidos };
+  // Avisos de los que volvieron a escribir (uno por lead original, aunque haya llenado varias veces en el mismo archivo).
+  const avisados = new Set();
+  for (const rep of reps) { if (avisados.has(rep.leadId)) continue; avisados.add(rep.leadId); avisarRepeticion(db, rep); }
+  return { nuevos, repetidos, invalidos, ids, repartidos, repeticiones: reps.length, repetidos_leads: [...avisados] };
 }
 
 export function metaConfig() {
@@ -172,7 +183,7 @@ export async function syncMetaLeads(db, { trigger = 'auto' } = {}) {
     setSetting(db, 'meta_sync', status);
     return status;
   }
-  const exists = db.prepare('SELECT 1 FROM leads WHERE meta_lead_id = ?');
+  const exists = db.prepare('SELECT 1 FROM leads WHERE meta_lead_id = ? UNION ALL SELECT 1 FROM repeticiones WHERE meta_lead_id = ?');
   const token = encodeURIComponent(process.env.META_ACCESS_TOKEN);
   const fields = 'id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform,is_organic';
   try {
@@ -191,7 +202,7 @@ export async function syncMetaLeads(db, { trigger = 'auto' } = {}) {
         const data = page.data || [];
         let known = 0;
         for (const item of data) {
-          if (exists.get(String(item.id))) { known++; continue; }
+          if (exists.get(String(item.id), String(item.id))) { known++; continue; }
           fresh.push(leadFromGraph(item, formName));
         }
         // Meta returns newest first: a page made only of known leads means the rest is older and known too.

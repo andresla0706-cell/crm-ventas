@@ -145,7 +145,7 @@ export function recalcularPrioridades(db, ids = null) {
   const dup = db.prepare('SELECT 1 FROM leads WHERE id != ? AND ((whatsapp IS NOT NULL AND whatsapp = ?) OR (correo IS NOT NULL AND lower(correo) = lower(?))) LIMIT 1');
   let n = 0;
   for (const l of rows) {
-    const repetido = !!dup.get(l.id, l.whatsapp || '', l.correo || '');
+    const repetido = (l.repeticiones || 0) > 0 || !!dup.get(l.id, l.whatsapp || '', l.correo || '');
     const { prioridad, detalle } = calcularPrioridad(cfg, hist, l, repetido);
     if (l.prioridad !== prioridad || !l.prioridad_detalle) { upd.run(prioridad, JSON.stringify(detalle), l.id); n++; }
   }

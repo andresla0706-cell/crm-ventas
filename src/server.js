@@ -17,6 +17,7 @@ import {
   sessionMiddleware, requireAuth, requireAdmin, cookieOptions, COOKIE,
 } from './auth.js';
 import { leadFromExportRow, insertNewLeads, syncMetaLeads, startMetaPolling, metaStatus, normalizePhone } from './meta.js';
+import { buscarOriginal, registrarRepeticion, avisarRepeticion, repeticionesDeLead } from './repetidos.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -211,10 +212,28 @@ app.post('/api/leads', requireAuth, (req, res) => {
   const stages = config.etapas[area] || [];
   const etapa = stages.some((s) => s.id === b.etapa) ? b.etapa : stages[0]?.id;
   const now = nowIso();
+  const whatsapp = normalizePhone(b.whatsapp) || null;
+  const correo = str(b.correo);
+
+  // Repetido: mismo WhatsApp o correo que un lead que ya existe.
+  const original = buscarOriginal(db, { whatsapp, correo });
+  if (original && b.registrar) {
+    const rep = registrarRepeticion(db, original, { nombre, correo, whatsapp, pais: str(b.pais, 80), ciudad: str(b.ciudad, 120), respuestas: {} }, { origen: 'manual', userId: req.user.id });
+    avisarRepeticion(db, rep);
+    const visible = canSeeLead(req.user, original);
+    return res.json({ repeticion: true, lead: visible ? rowToLead(q.leadById.get(original.id)) : null, original: resumenOriginal(original, visible) });
+  }
+  if (original && !(b.forzar && isAdmin(req.user))) {
+    const visible = canSeeLead(req.user, original);
+    return res.status(409).json({
+      error: `Ya existe un lead con ese ${mismoTelefono(original.whatsapp, whatsapp) ? 'WhatsApp' : 'correo'}: ${original.nombre}.`,
+      repetido: true, original: resumenOriginal(original, visible), puedeForzar: isAdmin(req.user),
+    });
+  }
   const r = db.prepare(`INSERT INTO leads (nombre, correo, whatsapp, pais, ciudad, monto, area, etapa, responsable_id, proxima_accion, proxima_fecha, notas,
       origen_tipo, respuestas, lead_creado_en, creado_en, actualizado_en, creado_por)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', '{}', ?, ?, ?, ?)`)
-    .run(nombre, str(b.correo), normalizePhone(b.whatsapp) || null, str(b.pais, 80), str(b.ciudad, 120), num(b.monto), area, etapa, responsable_id,
+    .run(nombre, correo, whatsapp, str(b.pais, 80), str(b.ciudad, 120), num(b.monto), area, etapa, responsable_id,
       str(b.proxima_accion), isoOrNull(b.proxima_fecha), str(b.notas, 5000), now, now, now, req.user.id);
   if (responsable_id) db.prepare('UPDATE leads SET asignado_en = ?, ultimo_toque_en = ? WHERE id = ?').run(now, responsable_id === req.user.id ? now : null, Number(r.lastInsertRowid));
   const id = Number(r.lastInsertRowid);
@@ -233,6 +252,27 @@ function applyMarks(id, marks) {
   if (!keys.length) return;
   db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => marks[k]), id);
 }
+
+function mismoTelefono(a, b) {
+  const x = String(a || '').replace(/\D/g, ''), y = String(b || '').replace(/\D/g, '');
+  if (!x || !y) return false;
+  return x === y || (x.length >= 10 && y.length >= 10 && x.slice(-10) === y.slice(-10));
+}
+
+/** Lo que se puede contar de un lead existente a quien intenta crearlo de nuevo (sin exponer datos si no lo puede ver). */
+function resumenOriginal(l, visible) {
+  const config = getConfig(db);
+  return {
+    id: visible ? l.id : null, nombre: l.nombre, area: l.area, etapa: stageName(config, l.area, l.etapa),
+    responsable: userName(l.responsable_id), perdido: !!l.perdido_en, creado_en: l.lead_creado_en || l.creado_en, repeticiones: l.repeticiones || 0, visible,
+  };
+}
+
+app.get('/api/leads/:id/repeticiones', requireAuth, (req, res) => {
+  const lead = q.leadById.get(Number(req.params.id));
+  if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
+  res.json({ repeticiones: repeticionesDeLead(db, lead.id) });
+});
 
 app.patch('/api/leads/:id', requireAuth, (req, res) => {
   const lead = q.leadById.get(Number(req.params.id));
@@ -374,6 +414,7 @@ app.delete('/api/leads/:id', requireAdmin, (req, res) => {
   if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
   db.prepare('DELETE FROM activities WHERE lead_id = ?').run(id);
   db.prepare('DELETE FROM tasks WHERE lead_id = ?').run(id);
+  db.prepare('DELETE FROM repeticiones WHERE lead_id = ?').run(id);
   const r = db.prepare('DELETE FROM leads WHERE id = ?').run(id);
   res.json({ eliminado: r.changes > 0 });
 });
@@ -644,9 +685,9 @@ app.post('/api/admin/vaciar', requireAdmin, (req, res) => {
   const antes = { leads: db.prepare('SELECT COUNT(*) AS n FROM leads').get().n, tareas: db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n };
   db.exec('BEGIN');
   try {
-    db.exec('DELETE FROM activities; DELETE FROM tasks; DELETE FROM leads;');
+    db.exec('DELETE FROM activities; DELETE FROM tasks; DELETE FROM repeticiones; DELETE FROM leads;');
     try { db.exec('DELETE FROM coach'); } catch { /* puede no existir */ }
-    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('leads','activities','tasks','coach')");
+    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('leads','activities','tasks','coach','repeticiones')");
     db.prepare("DELETE FROM settings WHERE key IN ('meta_sync','reparto_puntero')").run();
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: e.message }); }

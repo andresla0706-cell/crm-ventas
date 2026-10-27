@@ -86,6 +86,7 @@
   const myAreas = () => userAreas(S.user);
   const bothAreas = () => S.user?.area === 'AMBAS';
   const usersForArea = (a) => S.users.filter((u) => u.activo !== false && userHasArea(u, a));
+  const repChip = (l) => (l.repeticiones > 0 ? `<span class="chip rep" title="Volvió a escribir ${l.repeticiones} ${l.repeticiones === 1 ? 'vez' : 'veces'}${l.ultima_repeticion_en ? ` · última ${ago(l.ultima_repeticion_en)}` : ''}">🔁 ${l.repeticiones > 1 ? `×${l.repeticiones}` : 'Volvió a escribir'}</span>` : '');
   const origenLabel = (l) => (l.origen_tipo === 'manual' ? 'Manual' : l.origen_tipo === 'import' ? 'Meta (archivo)' : l.origen_tipo === 'webhook' ? 'Webhook' : 'Meta');
 
   // ---------- API ----------
@@ -94,7 +95,7 @@
     let data = {};
     try { data = await res.json(); } catch { /* vacío */ }
     if (res.status === 401 && !url.endsWith('/login')) { showLogin(); throw new Error(data.error || 'Sesión expirada.'); }
-    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    if (!res.ok) { const err = new Error(data.error || `Error ${res.status}`); err.status = res.status; err.data = data; throw err; }
     return data;
   }
   function toast(msg, kind = '') {
@@ -424,6 +425,7 @@
     const due = l.proxima_fecha ? `<span class="due ${dueClass(l.proxima_fecha)}" title="${h(l.proxima_accion || 'Próxima acción')}">⏰ ${fmtDT(l.proxima_fecha)}</span>` : '';
     return `<div class="card" draggable="true" data-id="${l.id}">
       <div class="top"><span class="name">${h(l.nombre)}</span>${l.monto != null ? `<span class="num small"><b>${money(l.monto)}</b></span>` : ''}</div>
+      ${l.repeticiones > 0 ? `<div>${repChip(l)}</div>` : ''}
       <div class="small muted">${flag(l.pais)} ${h([countryName(l.pais), l.ciudad].filter(Boolean).join(' · ')) || '<span class="faint">Sin ubicación</span>'}</div>
       <div class="bottom">${r ? `<span class="avatar" title="${h(r.nombre)}">${initials(r.nombre)}</span>` : '<span class="avatar none" title="Sin asignar">—</span>'}${prioChip(l)}${due || timerChip(l)}<span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span></div>
       ${l.ad_name || l.origen_tipo === 'manual' ? `<div class="src">${h(l.ad_name ? `${l.ad_name}` : 'Creado manualmente')}</div>` : ''}
@@ -477,7 +479,8 @@
     let leads = S.leads.filter((l) => l.area === area && matchesQ(l));
     if (f.etapa) leads = leads.filter((l) => l.etapa === f.etapa);
     if (f.responsable === 'none') leads = leads.filter((l) => l.responsable_id == null); else if (f.responsable) leads = leads.filter((l) => l.responsable_id === Number(f.responsable));
-    if (f.origen) leads = leads.filter((l) => (f.origen === 'meta' ? l.origen_tipo !== 'manual' : l.origen_tipo === 'manual'));
+    if (f.origen === 'rep') leads = leads.filter((l) => l.repeticiones > 0);
+    else if (f.origen) leads = leads.filter((l) => (f.origen === 'meta' ? l.origen_tipo !== 'manual' : l.origen_tipo === 'manual'));
     if (f.contacto === 'sin') leads = leads.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en);
     else if (f.contacto === 'con') leads = leads.filter((l) => l.primer_contacto_en);
     else if (f.contacto === 'nr') leads = leads.filter((l) => l.sin_respuesta_en);
@@ -491,7 +494,7 @@
       <div class="filters">
         <select class="input" id="fEtapa"><option value="">Todas las etapas</option>${stages(area).map((s) => `<option value="${s.id}" ${f.etapa === s.id ? 'selected' : ''}>${h(s.nombre)}</option>`).join('')}</select>
         ${isAdmin() ? `<select class="input" id="fResp"><option value="">Todos los responsables</option><option value="none" ${f.responsable === 'none' ? 'selected' : ''}>Sin asignar</option>${S.users.map((u) => `<option value="${u.id}" ${String(f.responsable) === String(u.id) ? 'selected' : ''}>${h(u.nombre)}</option>`).join('')}</select>` : ''}
-        <select class="input" id="fOrigen"><option value="">Todos los orígenes</option><option value="meta" ${f.origen === 'meta' ? 'selected' : ''}>Meta</option><option value="manual" ${f.origen === 'manual' ? 'selected' : ''}>Manual</option></select>
+        <select class="input" id="fOrigen"><option value="">Todos los orígenes</option><option value="meta" ${f.origen === 'meta' ? 'selected' : ''}>Meta</option><option value="manual" ${f.origen === 'manual' ? 'selected' : ''}>Manual</option><option value="rep" ${f.origen === 'rep' ? 'selected' : ''}>Volvieron a escribir${S.leads.some((l) => l.area === area && l.repeticiones > 0) ? ` (${S.leads.filter((l) => l.area === area && l.repeticiones > 0).length})` : ''}</option></select>
         <select class="input" id="fContacto"><option value="">Contacto: todos</option><option value="sin" ${f.contacto === 'sin' ? 'selected' : ''}>Sin contactar</option><option value="con" ${f.contacto === 'con' ? 'selected' : ''}>Contactados</option><option value="nr" ${f.contacto === 'nr' ? 'selected' : ''}>Sin respuesta</option></select>
         <span class="muted small">${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
         ${isAdmin() && area === 'FTD' && S.config.reparto?.activo && S.sinAsignar ? `<button class="btn sm" id="repartirBtn" style="margin-left:auto">Repartir sin asignar (${S.sinAsignar})</button>` : ''}
@@ -505,7 +508,7 @@
           ${th('nombre', 'Nombre')}<th>Contacto</th>${th('pais', 'País')}${th('etapa', 'Etapa')}${th('responsable', 'Responsable')}${th('monto', 'Monto')}${th('proxima', 'Próxima acción')}<th>Origen</th>${th('creado', 'Creado')}</tr></thead>
         <tbody>${leads.map((l) => `<tr class="row" data-id="${l.id}">
           ${selectable ? `<td><input type="checkbox" class="selOne" data-id="${l.id}" ${sel.has(l.id) ? 'checked' : ''}></td>` : ''}
-          <td class="name">${h(l.nombre)} ${prioChip(l)}${l.ciudad ? `<div class="sub">${h(l.ciudad)}</div>` : ''}</td>
+          <td class="name">${h(l.nombre)} ${prioChip(l)}${repChip(l)}${l.ciudad ? `<div class="sub">${h(l.ciudad)}</div>` : ''}</td>
           <td><div class="num small">${h(l.whatsapp || '')}</div><div class="sub">${h(l.correo || '')}</div></td>
           <td>${flag(l.pais)} ${h(countryName(l.pais))}</td>
           <td><span class="chip ${stage(l).tipo === 'ganada' ? 'good' : stage(l).tipo === 'perdida' ? 'bad' : stage(l).tipo === 'calificado' ? 'accent' : ''}">${h(stage(l).nombre)}</span></td>
@@ -789,7 +792,7 @@
     fresh().innerHTML = `<div class="two">
       <div class="panel">
         <h2>Importar archivo de Meta</h2>
-        <p class="muted small" style="margin:0">Descarga los leads desde el Centro de clientes potenciales o el formulario (archivo .xls, .csv o .xlsx) y súbelo aquí. Los leads repetidos se omiten automáticamente.</p>
+        <p class="muted small" style="margin:0">Descarga los leads desde el Centro de clientes potenciales o el formulario (archivo .xls, .csv o .xlsx) y súbelo aquí. Si un lead ya estaba (mismo ID de Meta) se omite; si la persona volvió a llenar el formulario (mismo WhatsApp o correo) no se duplica: se anota en su ficha y se le avisa a su responsable.</p>
         <div class="dropzone" id="drop">Arrastra el archivo aquí o <b>haz clic para elegirlo</b><input type="file" id="file" accept=".xls,.xlsx,.csv,.txt" hidden></div>
         <div id="importPreview"></div>
       </div>
@@ -840,7 +843,7 @@
       box.innerHTML = `<div class="stack" style="gap:8px"><div><b>${f.name}</b> · ${rows.length} fila(s) · ${nuevos} nueva(s) · ${rows.length - nuevos} ya en el CRM</div>
         <div class="small muted">Columnas: ${cols.map((c) => `<code>${h(c)}</code>`).join(' ')}</div>
         <div><button class="btn primary" id="doImport" ${nuevos ? '' : 'disabled'}>Importar ${nuevos} lead(s)</button></div></div>`;
-      $('#doImport').onclick = async () => { $('#doImport').disabled = true; try { const r = await api('POST', '/api/import', { rows }); toast(`${r.nuevos} importado(s), ${r.repetidos} repetido(s)${r.repartidos ? `, ${r.repartidos} repartido(s) al equipo` : ''}`, 'good'); await load(); go('lista'); } catch (e) { fail(e); $('#doImport').disabled = false; } };
+      $('#doImport').onclick = async () => { $('#doImport').disabled = true; try { const r = await api('POST', '/api/import', { rows }); toast(`${r.nuevos} importado(s)${r.repeticiones ? `, ${r.repeticiones} volvieron a escribir (anotados en su ficha)` : ''}${r.repetidos ? `, ${r.repetidos} ya estaban` : ''}${r.repartidos ? `, ${r.repartidos} repartido(s) al equipo` : ''}`, 'good'); await load(); go('lista'); } catch (e) { fail(e); $('#doImport').disabled = false; } };
     } catch (e) { box.innerHTML = `<p style="color:var(--bad)">${h(e.message)}</p>`; }
   }
 
@@ -997,12 +1000,33 @@
       $('#nEtapa').innerHTML = stages(e.target.value).map((s) => `<option value="${s.id}">${h(s.nombre)}</option>`).join('');
       if ($('#nResp')) $('#nResp').innerHTML = `<option value="">Sin asignar</option>${usersForArea(e.target.value).map((u) => `<option value="${u.id}">${h(u.nombre)}</option>`).join('')}`;
     });
+    const datos = () => ({ nombre: $('#nNombre').value, whatsapp: $('#nWa').value, correo: $('#nCorreo').value, pais: $('#nPais').value.toUpperCase().length === 2 ? $('#nPais').value.toUpperCase() : $('#nPais').value, ciudad: $('#nCiudad').value, monto: $('#nMonto').value, area: $('#nArea')?.value || area, etapa: $('#nEtapa').value, responsable_id: $('#nResp')?.value || null, proxima_accion: $('#nPA').value, proxima_fecha: fromLocalInput($('#nPF').value), notas: $('#nNotas').value });
     $('#nOk').onclick = async () => {
+      const body = datos();
       try {
-        const d = await api('POST', '/api/leads', { nombre: $('#nNombre').value, whatsapp: $('#nWa').value, correo: $('#nCorreo').value, pais: $('#nPais').value.toUpperCase().length === 2 ? $('#nPais').value.toUpperCase() : $('#nPais').value, ciudad: $('#nCiudad').value, monto: $('#nMonto').value, area: $('#nArea')?.value || area, etapa: $('#nEtapa').value, responsable_id: $('#nResp')?.value || null, proxima_accion: $('#nPA').value, proxima_fecha: fromLocalInput($('#nPF').value), notas: $('#nNotas').value });
+        const d = await api('POST', '/api/leads', body);
         closeModal(); toast('Lead creado', 'good'); await load(); openLead(d.lead.id);
-      } catch (e) { fail(e); }
+      } catch (e) {
+        if (e.status === 409 && e.data?.repetido) repetidoModal(body, e.data);
+        else fail(e);
+      }
     };
+  }
+  /** Al crear un lead que ya existe: ver el original, anotarlo como "volvió a escribir" o (admin) crearlo igual. */
+  function repetidoModal(body, info) {
+    const o = info.original;
+    modal(`<h2>Ya existe</h2>
+      <p class="muted">${h(body.nombre)} tiene el mismo WhatsApp o correo que un lead que ya está en Zigga:</p>
+      <div class="item" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px"><div class="body"><div class="t">${h(o.nombre)} ${o.repeticiones ? `<span class="chip rep">🔁 ×${o.repeticiones}</span>` : ''}</div><div class="m">${areaLabel(o.area)} · ${h(o.etapa)}${o.perdido ? ' (perdido)' : ''} · ${h(o.responsable)} · llegó ${ago(o.creado_en)}</div></div></div>
+      <p class="small muted" style="margin:0">Para no duplicar fichas, lo recomendado es anotarlo en el original: queda en su historial y ${o.responsable === 'Sin asignar' ? 'se avisa al administrador' : `se le avisa a ${h(o.responsable)}`}.</p>
+      <div class="actions"><button class="btn" data-close>Cancelar</button>${o.visible ? `<button class="btn" id="repOpen">Abrir ficha</button>` : ''}<button class="btn primary" id="repReg">Anotar en el original</button>${info.puedeForzar ? `<button class="btn" id="repForce">Crear de todas formas</button>` : ''}</div>`);
+    $('#repOpen') && ($('#repOpen').onclick = () => { closeModal(); openLead(o.id); });
+    $('#repReg').onclick = async () => {
+      try { const d = await api('POST', '/api/leads', { ...body, registrar: true }); closeModal(); toast(`Anotado en la ficha de ${d.original.nombre}`, 'good'); await load(); if (d.lead) openLead(d.lead.id); } catch (e) { fail(e); }
+    };
+    $('#repForce') && ($('#repForce').onclick = async () => {
+      try { const d = await api('POST', '/api/leads', { ...body, forzar: true }); closeModal(); toast('Lead creado (duplicado a propósito)', 'good'); await load(); openLead(d.lead.id); } catch (e) { fail(e); }
+    });
   }
 
   // ---------- ficha del lead (drawer) ----------
@@ -1012,6 +1036,16 @@
     S.openLeadId = id; S.activities = [];
     renderDrawer();
     try { const d = await api('GET', `/api/leads/${id}/activities`); if (S.openLeadId === id) { S.activities = d.activities; renderTimeline(); } } catch (e) { fail(e); }
+    loadRepeticiones(lead);
+  }
+  async function loadRepeticiones(lead) {
+    if (!lead.repeticiones || !$('#repList')) return;
+    try {
+      const d = await api('GET', `/api/leads/${lead.id}/repeticiones`);
+      const box = $('#repList'); if (!box || S.openLeadId !== lead.id) return;
+      box.className = 'list';
+      box.innerHTML = d.repeticiones.map((r) => `<div class="item"><div class="body"><div class="t">${fmtDT(r.en)} · ${r.origen === 'manual' ? `intentaron crearlo de nuevo${r.usuario ? ` (${h(r.usuario)})` : ''}` : r.ad_name ? `anuncio “${h(r.ad_name)}”` : r.form_name ? `formulario “${h(r.form_name)}”` : 'formulario de Meta'}</div>${Object.keys(r.respuestas || {}).length ? `<div class="m">${Object.entries(r.respuestas).map(([k, v]) => `${h(k)}: <b>${h(v)}</b>`).join(' · ')}</div>` : ''}</div></div>`).join('') || '<div class="faint small">Sin detalle.</div>';
+    } catch { /* no es crítico */ }
   }
   function closeDrawer() { S.openLeadId = null; $('#drawerRoot')?.remove(); if (location.hash.startsWith('#lead-')) history.replaceState(null, '', `#${S.view}`); }
   async function refreshDrawer() {
@@ -1020,6 +1054,7 @@
     if (inDrawer && /^(INPUT|TEXTAREA)$/.test(active.tagName)) return; // no pisar lo que está escribiendo
     renderDrawer(true);
     try { const d = await api('GET', `/api/leads/${S.openLeadId}/activities`); S.activities = d.activities; renderTimeline(); } catch { /* se intenta luego */ }
+    { const l = S.leads.find((x) => x.id === S.openLeadId); if (l) loadRepeticiones(l); }
     if (activeId) $(`#${activeId}`)?.focus();
   }
   function renderDrawer(keepScroll = false) {
@@ -1038,7 +1073,7 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
             <span class="chip ${l.area === 'RET' ? 'ret' : 'accent'}">${areaLabel(l.area)}</span>
             <span class="chip ${st.tipo === 'ganada' ? 'good' : st.tipo === 'perdida' ? 'bad' : ''}">${h(st.nombre)}</span>
-            <span class="chip">${origenLabel(l)}</span>
+            <span class="chip">${origenLabel(l)}</span>${repChip(l)}
             <span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span>
           </div>
         </div>
@@ -1077,6 +1112,7 @@
           ${l.campaign_name ? `<dt>Campaña</dt><dd>${h(l.campaign_name)}</dd>` : ''}${l.adset_name ? `<dt>Conjunto</dt><dd>${h(l.adset_name)}</dd>` : ''}${l.ad_name ? `<dt>Anuncio</dt><dd>${h(l.ad_name)}</dd>` : ''}
           ${l.form_name ? `<dt>Formulario</dt><dd>${h(l.form_name)}</dd>` : ''}${l.platform ? `<dt>Plataforma</dt><dd>${l.platform === 'ig' ? 'Instagram' : l.platform === 'fb' ? 'Facebook' : h(l.platform)}</dd>` : ''}
           <dt>Fecha del lead</dt><dd>${fmtDT(l.lead_creado_en)}</dd>${l.meta_lead_id ? `<dt>ID en Meta</dt><dd class="num small">${h(l.meta_lead_id)}</dd>` : ''}</dl></section>` : ''}
+        ${l.repeticiones > 0 ? `<section class="rep-box"><h3>🔁 Volvió a escribir <span class="chip rep">${l.repeticiones}</span></h3><p class="small muted" style="margin:0">${l.area === 'RET' ? 'Este cliente' : 'Esta persona'} llenó el formulario otra vez${l.ultima_repeticion_en ? `, la última ${ago(l.ultima_repeticion_en)}` : ''}. No se creó otro lead: todo queda en esta ficha.</p><div id="repList" class="small faint">Cargando…</div></section>` : ''}
         <section><h3>Tareas <span class="chip">${leadTasks.length}</span></h3>
           ${leadTasks.length ? `<div class="list">${leadTasks.map((t) => `<div class="item"><label class="check" style="margin-top:2px"><input type="checkbox" data-task="${t.id}"></label><div class="body"><div class="t">${h(t.titulo)}</div><div class="m"><span class="due ${dueClass(t.fecha)}">${fmtDT(t.fecha)}</span>${isAdmin() ? ` · ${h(uname(t.asignado_id))}` : ''}</div></div></div>`).join('')}</div>` : ''}
           <div><button class="btn sm" id="dNewTask">+ Tarea para este lead</button></div>
@@ -1096,7 +1132,7 @@
   function renderTimeline() {
     const tl = $('#timeline'); if (!tl) return;
     if (!S.activities.length) { tl.innerHTML = '<div class="faint small">Sin movimientos todavía.</div>'; return; }
-    const icon = { nota: '✎', llamada: '☎', whatsapp: '✆', reunion: '◷', etapa: '→', asignacion: '●', area: '↹', tarea: '✓', creacion: '+', campo: '✎', proxima: '⏰' };
+    const icon = { nota: '✎', llamada: '☎', whatsapp: '✆', reunion: '◷', etapa: '→', asignacion: '●', area: '↹', tarea: '✓', creacion: '+', campo: '✎', proxima: '⏰', repeticion: '🔁' };
     tl.innerHTML = S.activities.map((a) => `<div class="tl"><div class="dot ${a.tipo === 'llamada' || a.tipo === 'whatsapp' || a.tipo === 'reunion' ? 'nota' : a.tipo}">${icon[a.tipo] || '•'}</div><div><div class="txt">${a.tipo === 'campo' && a.de != null && a.a != null && !a.texto?.includes('→') ? `${h(a.texto)}: <span class="faint">${h(a.de || '—')}</span> → ${h(a.a || '—')}` : h(a.texto)}</div><div class="when">${fmtDT(a.en)} · ${h(a.usuario || 'Sistema')}</div></div></div>`).join('');
   }
   function wireDrawer(l) {

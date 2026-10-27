@@ -35,6 +35,10 @@ Cada vez que haces push a la rama principal, Railway vuelve a desplegar.
 - **Automático**: define `META_ACCESS_TOKEN` (token de usuario del sistema con `leads_retrieval` y `pages_show_list` sobre la página) y `META_FORM_IDS`. El servidor consulta `/{form_id}/leads` cada `META_POLL_MINUTES` minutos y crea solo los nuevos.
 - **Webhook**: `POST /api/webhooks/leads?key=WEBHOOK_KEY` con JSON. Acepta el lead tal como lo entrega Meta (`field_data`) o un objeto simple `{ "nombre", "correo", "whatsapp", "pais", "ciudad", "respuestas": {} }`. Útil desde n8n.
 
+### Repetidos (la misma persona vuelve a llenar el formulario)
+
+Por cualquier vía de entrada, si el WhatsApp o el correo ya están en la base **no se crea otro lead**: se anota en la ficha original (historial y tabla `repeticiones`, con lo que respondió esta vez), se le crea la tarea «Te volvió a escribir» al responsable y se le manda la notificación del navegador (a los administradores si no hay responsable). Si el original está en Retención se marca como «Cliente existente». Al crear un lead a mano que ya existe, Zigga lo avisa y ofrece anotarlo en el original; solo el administrador puede crearlo de todas formas.
+
 ## Roles
 
 - **Administrador**: ve todo, asigna leads, crea usuarios, cambia etapas y motivos, importa y exporta.

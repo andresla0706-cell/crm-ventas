@@ -40,10 +40,11 @@ function scopeCTE(db, user) {
   const etapas = [];
   for (const a of ['FTD', 'RET']) for (const st of config.etapas[a] || []) etapas.push(`(${esc(a)},${esc(st.id)},${esc(st.nombre)},${esc(st.tipo)})`);
   return `WITH etapas(area, etapa, nombre, tipo) AS (VALUES ${etapas.join(',')}),
-leads AS (SELECT id, nombre, correo, whatsapp, pais, ciudad, monto, area, etapa, responsable_id, proxima_accion, proxima_fecha, notas, motivo_perdida, origen_tipo, campaign_name, adset_name, ad_name, form_name, platform, respuestas, COALESCE(lead_creado_en, creado_en) AS lead_creado_en, creado_en, actualizado_en, calificado_en, cliente_en, perdido_en, retencion_en, primer_contacto_en, ultimo_contacto_en, intentos, sin_respuesta_en, asignado_en, prioridad FROM main.leads WHERE area IN (${areaIn})${soloMios}),
+leads AS (SELECT id, nombre, correo, whatsapp, pais, ciudad, monto, area, etapa, responsable_id, proxima_accion, proxima_fecha, notas, motivo_perdida, origen_tipo, campaign_name, adset_name, ad_name, form_name, platform, respuestas, COALESCE(lead_creado_en, creado_en) AS lead_creado_en, creado_en, actualizado_en, calificado_en, cliente_en, perdido_en, retencion_en, primer_contacto_en, ultimo_contacto_en, intentos, sin_respuesta_en, asignado_en, prioridad, repeticiones, ultima_repeticion_en FROM main.leads WHERE area IN (${areaIn})${soloMios}),
 usuarios AS (SELECT id, nombre, role, area, activo FROM main.users),
 tareas AS (SELECT id, lead_id, titulo, fecha, hecho, hecho_en, asignado_id, creado_en FROM main.tasks WHERE lead_id IN (SELECT id FROM leads)${user.role === 'vendedor' ? ` OR (lead_id IS NULL AND asignado_id = ${Number(user.id)})` : ' OR lead_id IS NULL'}),
 actividades AS (SELECT id, lead_id, tipo, texto, user_id, en FROM main.activities WHERE lead_id IN (SELECT id FROM leads)),
+repeticiones AS (SELECT id, lead_id, origen, ad_name, campaign_name, form_name, respuestas, en FROM main.repeticiones WHERE lead_id IN (SELECT id FROM leads)),
 users AS (SELECT * FROM usuarios), tasks AS (SELECT * FROM tareas), activities AS (SELECT * FROM actividades),
 sessions AS (SELECT NULL AS token WHERE 0), settings AS (SELECT NULL AS key WHERE 0)
 `;
@@ -87,10 +88,11 @@ Quién pregunta: ${user.nombre} (id ${user.id}), rol ${user.role === 'admin' ? '
 Fecha y hora actual: ${f.local} (zona ${TZ}). Las fechas en la base están en ISO 8601 UTC. Límites útiles en UTC: hoy empieza en '${f.inicioHoy}', la semana (lunes) en '${f.inicioSemana}', el mes en '${f.inicioMes}', ahora es '${f.ahora}'.
 
 Tablas disponibles (SQLite, solo lectura):
-- leads(id, nombre, correo, whatsapp, pais, ciudad, monto, area ['FTD'|'RET'], etapa [id de etapa], responsable_id, proxima_accion, proxima_fecha, notas, motivo_perdida, origen_tipo ['manual'|'import'|'meta'|'webhook'], campaign_name, adset_name, ad_name, form_name, platform, respuestas [JSON texto: usa json_extract(respuestas, '$.\"pregunta\"')], lead_creado_en, creado_en, actualizado_en, calificado_en, cliente_en, perdido_en, retencion_en, primer_contacto_en, ultimo_contacto_en, intentos, sin_respuesta_en, asignado_en, prioridad)
+- leads(id, nombre, correo, whatsapp, pais, ciudad, monto, area ['FTD'|'RET'], etapa [id de etapa], responsable_id, proxima_accion, proxima_fecha, notas, motivo_perdida, origen_tipo ['manual'|'import'|'meta'|'webhook'], campaign_name, adset_name, ad_name, form_name, platform, respuestas [JSON texto: usa json_extract(respuestas, '$.\"pregunta\"')], lead_creado_en, creado_en, actualizado_en, calificado_en, cliente_en, perdido_en, retencion_en, primer_contacto_en, ultimo_contacto_en, intentos, sin_respuesta_en, asignado_en, prioridad, repeticiones [veces que la misma persona volvió a llenar el formulario], ultima_repeticion_en)
 - usuarios(id, nombre, role ['admin'|'vendedor'], area ['FTD'|'RET'|'AMBAS'], activo)
 - tareas(id, lead_id, titulo, fecha, hecho [0/1], hecho_en, asignado_id, creado_en)
-- actividades(id, lead_id, tipo ['creacion','etapa','asignacion','area','nota','llamada','whatsapp','reunion','tarea','campo','proxima'], texto, user_id, en)
+- actividades(id, lead_id, tipo ['creacion','etapa','asignacion','area','nota','llamada','whatsapp','reunion','tarea','campo','proxima','repeticion'], texto, user_id, en)
+- repeticiones(id, lead_id, origen, ad_name, campaign_name, form_name, respuestas [JSON texto], en) — cada vez que una persona que ya existía volvió a llenar el formulario; no se crea otro lead
 - etapas(area, etapa, nombre, tipo ['abierta'|'calificado'|'ganada'|'perdida'])
 Etapas configuradas:
 ${etapas}

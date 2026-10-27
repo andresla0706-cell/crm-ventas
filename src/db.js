@@ -130,6 +130,19 @@ export function openDb(file) {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS repeticiones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id INTEGER NOT NULL,
+      meta_lead_id TEXT UNIQUE,
+      origen TEXT NOT NULL,
+      nombre TEXT, correo TEXT, whatsapp TEXT, pais TEXT, ciudad TEXT,
+      campaign_name TEXT, adset_name TEXT, ad_name TEXT, form_name TEXT, platform TEXT,
+      respuestas TEXT,
+      lead_creado_en TEXT,
+      user_id INTEGER,
+      en TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rep_lead ON repeticiones(lead_id, en);
   `);
   migrate(db);
   return db;
@@ -148,6 +161,8 @@ function migrate(db) {
   add('reasignaciones', 'INTEGER NOT NULL DEFAULT 0');
   add('prioridad', 'REAL');
   add('prioridad_detalle', 'TEXT');
+  add('repeticiones', 'INTEGER NOT NULL DEFAULT 0');
+  add('ultima_repeticion_en', 'TEXT');
 }
 
 export function nowIso() {

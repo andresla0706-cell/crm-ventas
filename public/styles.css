@@ -102,6 +102,9 @@ label.field > .input { font-weight: 500; color: var(--fg); font-size: 14px; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.ret { background: var(--ret-soft); color: var(--ret); }
+.chip.rep { background: var(--warn-soft); color: var(--warn); font-weight: 700; }
+.card .chip.rep { font-size: 11px; padding: 2px 7px; }
+.rep-box { padding: 12px; border: 1px solid var(--warn); border-radius: 12px; background: color-mix(in srgb, var(--warn-soft) 60%, transparent); }
 .chip.prio-high { background: var(--accent); color: var(--accent-fg); } .chip.prio-mid { background: var(--accent-soft); color: var(--accent-soft-fg); } .chip.prio-low { background: var(--surface-3); color: var(--fg-3); }
 .rule-row { display: grid; grid-template-columns: 200px 1fr 90px auto; gap: 8px; align-items: center; }
 .rule-row.with-q { grid-template-columns: 200px 1fr 1fr 90px auto; }
