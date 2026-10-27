@@ -618,6 +618,43 @@ app.patch('/api/users/:id', requireAdmin, (req, res) => {
   res.json({ user: publicUser(q.userById.get(u.id)) });
 });
 
+// ---------- zona de peligro (admin) ----------
+app.post('/api/admin/vaciar', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (b.confirmar !== 'BORRAR') return res.status(400).json({ error: 'Escribe BORRAR para confirmar.' });
+  let copia = null;
+  try { copia = path.basename(hacerBackup(db, DATA_DIR, 'antes-de-vaciar')); } catch (e) { return res.status(500).json({ error: `No se pudo crear la copia de seguridad previa: ${e.message}` }); }
+  const antes = { leads: db.prepare('SELECT COUNT(*) AS n FROM leads').get().n, tareas: db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n };
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM activities; DELETE FROM tasks; DELETE FROM leads;');
+    try { db.exec('DELETE FROM coach'); } catch { /* puede no existir */ }
+    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('leads','activities','tasks','coach')");
+    db.prepare("DELETE FROM settings WHERE key IN ('meta_sync','reparto_puntero')").run();
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: e.message }); }
+  console.log(`[crm] Base vaciada por ${req.user.nombre}: ${antes.leads} leads, ${antes.tareas} tareas (copia ${copia})`);
+  res.json({ ok: true, borrados: antes, copia });
+});
+
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
+  const u = q.userById.get(Number(req.params.id));
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado.' });
+  if (u.id === req.user.id) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo.' });
+  const n = db.prepare('SELECT COUNT(*) AS n FROM leads WHERE responsable_id = ?').get(u.id).n;
+  if (n) return res.status(400).json({ error: `${u.nombre} tiene ${n} lead(s) asignado(s). Reasígnalos o desactiva el usuario en vez de eliminarlo.` });
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+    db.prepare('DELETE FROM push_subs WHERE user_id = ?').run(u.id);
+    try { db.prepare('DELETE FROM coach WHERE user_id = ?').run(u.id); } catch { /* puede no existir */ }
+    db.prepare('UPDATE tasks SET asignado_id = NULL WHERE asignado_id = ?').run(u.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: e.message }); }
+  res.json({ ok: true });
+});
+
 // ---------- settings (admin) ----------
 app.put('/api/settings', requireAdmin, (req, res) => {
   const b = req.body || {};

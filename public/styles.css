@@ -373,6 +373,8 @@ body.tv #tvBtn { position: fixed; top: 12px; right: 12px; z-index: 50; }
 .modal .box.wide { width: min(720px, 100%); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .actions .left { margin-right: auto; }
+.danger-zone { border-color: var(--bad); }
+.danger-zone h2 { color: var(--bad); }
 .toasts { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 40; width: min(420px, calc(100% - 32px)); }
 .toast { background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 8px; font-weight: 600; box-shadow: var(--shadow); }
 .toast.bad { background: var(--bad); color: #fff; }

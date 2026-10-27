@@ -765,7 +765,11 @@
         ${u && !isMe ? `<label class="check" style="align-self:end;padding-bottom:8px"><input type="checkbox" id="uActivo" ${u.activo ? 'checked' : ''}> Usuario activo</label>` : ''}
       </div>
       <p class="small muted">Cada persona solo entra a las áreas que marques: quien tiene solo FTD no ve el tablero, los leads ni las métricas de Retención. Un vendedor además solo ve los leads que le asignes; un administrador ve todos los de sus áreas, asigna y administra el equipo.</p>
-      <div class="actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="uOk">${u ? 'Guardar' : 'Crear usuario'}</button></div>`);
+      <div class="actions">${u && !isMe ? '<button class="btn danger left" id="uDel">Eliminar usuario</button>' : ''}<button class="btn" data-close>Cancelar</button><button class="btn primary" id="uOk">${u ? 'Guardar' : 'Crear usuario'}</button></div>`);
+    $('#uDel') && ($('#uDel').onclick = async () => {
+      if ($('#uDel').dataset.armed !== '1') { $('#uDel').dataset.armed = '1'; $('#uDel').textContent = '¿Seguro? Clic de nuevo para eliminar'; return; }
+      try { await api('DELETE', `/api/users/${u.id}`); closeModal(); toast('Usuario eliminado'); await load(); } catch (e) { fail(e); $('#uDel').dataset.armed = '0'; $('#uDel').textContent = 'Eliminar usuario'; }
+    });
     $('#uOk').onclick = async () => {
       try {
         const ftd = $('#uFTD').checked, ret = $('#uRET').checked;
@@ -882,7 +886,21 @@
           <div><button class="btn sm" id="pAddRule">+ Agregar regla</button> <button class="btn sm ghost" id="pRecalc">Recalcular prioridades ahora</button></div></div>
         <p class="small faint" style="margin:0">Se compara sin tildes ni mayúsculas. "Respuesta del formulario" usa la pregunta que contiene… y la respuesta que contiene…; los demás campos se evalúan solos con lo que llega de Meta (país, correo, nombre, hora de llegada, repetido).</p>
       </div>
-      <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div></div>`;
+      <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div>
+      <div class="panel danger-zone"><h2>Zona de peligro</h2>
+        <p class="small muted" style="margin:0">Para entregar esta instancia limpia: borra todos los leads, su historial, tareas e informes del coach. Los usuarios, las etapas y los ajustes se conservan. Antes de borrar se guarda una copia de seguridad automática.</p>
+        <div><button class="btn danger" id="wipeBtn">Vaciar todos los leads…</button></div></div></div>`;
+    $('#wipeBtn').onclick = () => {
+      modal(`<h2>Vaciar todos los leads</h2><p class="muted">Se borrarán <b>${S.leads.length} leads</b> (de tus áreas y de las demás), su historial, ${S.tasks.length} tareas y los informes del coach. Se guarda una copia de seguridad antes. Escribe <b>BORRAR</b> para confirmar.</p>
+        <input class="input" id="wipeConfirm" placeholder="BORRAR" autocapitalize="characters">
+        <div class="actions"><button class="btn" data-close>Cancelar</button><button class="btn danger" id="wipeOk">Vaciar</button></div>`);
+      $('#wipeOk').onclick = async () => {
+        if ($('#wipeConfirm').value.trim() !== 'BORRAR') return toast('Escribe BORRAR para confirmar.', 'bad');
+        $('#wipeOk').disabled = true;
+        try { const r = await api('POST', '/api/admin/vaciar', { confirmar: 'BORRAR' }); closeModal(); toast(`Listo: ${r.borrados.leads} leads y ${r.borrados.tareas} tareas borrados · copia ${r.copia}`, 'good'); S.chat = []; await load(); }
+        catch (e) { fail(e); $('#wipeOk').disabled = false; }
+      };
+    };
     $('#pAddRule').onclick = () => { const list = $('#pReglas'); const tpl = document.createElement('div'); tpl.innerHTML = ruleRow({ campo: 'respuesta', pregunta: '', valor: '', puntos: 10 }); const div = tpl.firstElementChild; list.insertBefore(div, list.lastElementChild); div.querySelector('input').focus(); };
     V.addEventListener('change', (e) => { const sel = e.target.closest('[data-f=campo]'); if (!sel) return; const row = sel.closest('.rule-row'); const r = { campo: sel.value, pregunta: row.querySelector('[data-f=pregunta]')?.value || '', valor: '', puntos: row.querySelector('[data-f=puntos]').value }; const tpl = document.createElement('div'); tpl.innerHTML = ruleRow(r); row.replaceWith(tpl.firstElementChild); });
     $('#pRecalc').onclick = async () => { try { const r = await api('POST', '/api/prioridad/recalcular'); toast(`${r.recalculados} lead(s) recalculado(s)`, 'good'); await load(); } catch (e) { fail(e); } };
