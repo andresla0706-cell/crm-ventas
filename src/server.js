@@ -50,6 +50,7 @@ const q = {
   taskById: db.prepare('SELECT * FROM tasks WHERE id = ?'),
   insertActivity: db.prepare('INSERT INTO activities (lead_id, tipo, texto, de, a, user_id, en) VALUES (?, ?, ?, ?, ?, ?, ?)'),
 };
+resetAdminPassword();
 
 function act(leadId, tipo, texto, userId, de = null, a = null) {
   q.insertActivity.run(leadId, tipo, texto ?? null, de ?? null, a ?? null, userId ?? null, nowIso());
@@ -104,6 +105,22 @@ function bootstrapAdmin() {
     .run(username, process.env.ADMIN_NAME || 'Administrador', hashPassword(password), process.env.ADMIN_PASSWORD ? 0 : 1, nowIso());
   getConfig(db);
   console.log(`[crm] Administrador creado: usuario "${username}"${process.env.ADMIN_PASSWORD ? '' : ' con la contraseña por defecto (cámbiala al entrar)'}.`);
+}
+
+/** Restablece la clave del administrador si existe ADMIN_RESET_PASSWORD (una sola vez por valor; luego conviene borrar la variable). */
+function resetAdminPassword() {
+  const nueva = process.env.ADMIN_RESET_PASSWORD;
+  if (!nueva) return;
+  const marca = crypto.createHash('sha256').update(nueva).digest('hex').slice(0, 16);
+  if (getSetting(db, 'admin_reset_aplicado') === marca) return;
+  if (nueva.length < 8) { console.warn('[crm] ADMIN_RESET_PASSWORD debe tener al menos 8 caracteres; no se aplicó.'); return; }
+  const username = (process.env.ADMIN_USER || 'admin').toLowerCase();
+  let u = q.userByName.get(username) || db.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+  if (!u) { console.warn('[crm] No hay administrador para restablecer.'); return; }
+  db.prepare('UPDATE users SET password_hash = ?, debe_cambiar_clave = 1, activo = 1 WHERE id = ?').run(hashPassword(nueva), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+  setSetting(db, 'admin_reset_aplicado', marca);
+  console.log(`[crm] Contraseña del administrador "${u.username}" restablecida desde ADMIN_RESET_PASSWORD. Borra la variable cuando entres.`);
 }
 
 // ---------- público ----------
