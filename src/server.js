@@ -433,8 +433,13 @@ app.post('/api/leads/:id/notas', requireAuth, (req, res) => {
   if (!texto) return res.status(400).json({ error: 'Escribe la nota.' });
   const tipo = ['nota', 'llamada', 'whatsapp', 'reunion'].includes(req.body?.tipo) ? req.body.tipo : 'nota';
   act(lead.id, tipo, texto, req.user.id);
-  db.prepare('UPDATE leads SET actualizado_en = ?, ultimo_toque_en = ? WHERE id = ?').run(nowIso(), nowIso(), lead.id);
-  res.status(201).json({ ok: true });
+  const now = nowIso();
+  if (tipo === 'nota') db.prepare('UPDATE leads SET actualizado_en = ?, ultimo_toque_en = ? WHERE id = ?').run(now, now, lead.id);
+  else {
+    // Una llamada, un WhatsApp o una reunión registrados en la ficha cuentan como contacto: reactivan un lead "sin respuesta".
+    db.prepare('UPDATE leads SET actualizado_en = ?, ultimo_toque_en = ?, ultimo_contacto_en = ?, primer_contacto_en = COALESCE(primer_contacto_en, ?), intentos = 0, sin_respuesta_en = NULL WHERE id = ?').run(now, now, now, now, lead.id);
+  }
+  res.status(201).json({ ok: true, lead: rowToLead(q.leadById.get(lead.id)) });
 });
 
 // ---------- Zigga IA: chat con la base de datos ----------

@@ -1171,7 +1171,7 @@
     $$('[data-task]', root).forEach((cb) => cb.onchange = async () => { try { await api('PATCH', `/api/tasks/${cb.dataset.task}`, { hecho: cb.checked }); await load(); } catch (err) { fail(err); } });
     const addNote = async () => {
       const texto = $('#noteText').value.trim(); if (!texto) return;
-      try { await api('POST', `/api/leads/${l.id}/notas`, { texto, tipo: $('#noteTipo').value }); $('#noteText').value = ''; const d = await api('GET', `/api/leads/${l.id}/activities`); S.activities = d.activities; renderTimeline(); }
+      try { const r = await api('POST', `/api/leads/${l.id}/notas`, { texto, tipo: $('#noteTipo').value }); $('#noteText').value = ''; if (r.lead) { const i = S.leads.findIndex((x) => x.id === r.lead.id); if (i >= 0) S.leads[i] = r.lead; } const d = await api('GET', `/api/leads/${l.id}/activities`); S.activities = d.activities; renderTimeline(); }
       catch (err) { fail(err); }
     };
     $('#noteOk').onclick = addNote; $('#noteText').onkeydown = (e) => { if (e.key === 'Enter') addNote(); };
