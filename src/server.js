@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, findStage, forwardStage, DEFAULT_SETTINGS } from './db.js';
+import { openDb, nowIso, getConfig, setSetting, getSetting, rowToLead, stageMarks, marcasInconsistentes, findStage, forwardStage, DEFAULT_SETTINGS } from './db.js';
 import { startReparto, repartirLeads } from './reparto.js';
 import { startPrioridad, recalcularPrioridades } from './prioridad.js';
 import { iaConfig, chatZigga, consultarSQL } from './ia.js';
@@ -268,6 +268,45 @@ function resumenOriginal(l, visible) {
   };
 }
 
+/** Corrección del administrador: quita un cierre o una calificación que ya no corresponden a la etapa del lead. */
+app.post('/api/leads/:id/anular-marcas', requireAdmin, (req, res) => {
+  const lead = q.leadById.get(Number(req.params.id));
+  if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
+  const config = getConfig(db);
+  const marks = marcasInconsistentes(config, lead);
+  if (!Object.keys(marks).length) return res.status(400).json({ error: 'Este lead no tiene cierre ni calificación que anular.' });
+  const now = nowIso();
+  const keys = Object.keys(marks);
+  db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = NULL`).join(', ')}, actualizado_en = ? WHERE id = ?`).run(now, lead.id);
+  const nota = str(req.body?.nota, 300);
+  if ('cliente_en' in marks) act(lead.id, 'campo', `Cierre anulado por ${req.user.nombre} (contaba como cierre del ${fmtDate(lead.cliente_en)})${nota ? `: ${nota}` : ''}`, req.user.id);
+  if ('calificado_en' in marks) act(lead.id, 'campo', `Calificación anulada por ${req.user.nombre}${nota && !('cliente_en' in marks) ? `: ${nota}` : ''}`, req.user.id);
+  res.json({ lead: rowToLead(q.leadById.get(lead.id)), anulado: keys });
+});
+
+/** Recorre todos los leads de FTD y anula cierres/calificaciones que no corresponden a su etapa actual. */
+app.post('/api/admin/sanear-marcas', requireAdmin, (req, res) => {
+  const config = getConfig(db);
+  const rows = db.prepare("SELECT * FROM leads WHERE area = 'FTD' AND (cliente_en IS NOT NULL OR calificado_en IS NOT NULL)").all();
+  const now = nowIso();
+  let cierres = 0, calificaciones = 0;
+  const detalle = [];
+  for (const l of rows) {
+    const marks = marcasInconsistentes(config, l);
+    const keys = Object.keys(marks);
+    if (!keys.length) continue;
+    if (req.body?.aplicar) {
+      db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = NULL`).join(', ')}, actualizado_en = ? WHERE id = ?`).run(now, l.id);
+      if ('cliente_en' in marks) act(l.id, 'campo', `Cierre anulado por ${req.user.nombre} (contaba como cierre del ${fmtDate(l.cliente_en)} y el lead está en ${stageName(config, 'FTD', l.etapa)})`, req.user.id);
+      if ('calificado_en' in marks) act(l.id, 'campo', `Calificación anulada por ${req.user.nombre} (el lead está en ${stageName(config, 'FTD', l.etapa)})`, req.user.id);
+    }
+    if ('cliente_en' in marks) cierres++;
+    if ('calificado_en' in marks) calificaciones++;
+    detalle.push({ id: l.id, nombre: l.nombre, etapa: stageName(config, 'FTD', l.etapa), responsable: userName(l.responsable_id), cierre: 'cliente_en' in marks, calificacion: 'calificado_en' in marks });
+  }
+  res.json({ aplicado: !!req.body?.aplicar, cierres, calificaciones, detalle });
+});
+
 app.get('/api/leads/:id/repeticiones', requireAuth, (req, res) => {
   const lead = q.leadById.get(Number(req.params.id));
   if (!lead || !canSeeLead(req.user, lead)) return res.status(404).json({ error: 'Lead no encontrado.' });
@@ -341,6 +380,8 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
   if ('etapa' in sets) act(lead.id, 'etapa', `Etapa: ${stageName(config, lead.area, lead.etapa)} → ${stageName(config, area, sets.etapa)}`, req.user.id, stageName(config, lead.area, lead.etapa), stageName(config, area, sets.etapa));
   if ('responsable_id' in sets) act(lead.id, 'asignacion', sets.responsable_id ? `Asignado a ${userName(sets.responsable_id)}` : 'Quedó sin asignar', req.user.id, userName(lead.responsable_id), userName(sets.responsable_id));
   if ('motivo_perdida' in sets && sets.motivo_perdida) act(lead.id, 'campo', `Motivo de pérdida: ${sets.motivo_perdida}`, req.user.id);
+  if ('cliente_en' in sets && sets.cliente_en === null && lead.cliente_en) act(lead.id, 'campo', `Cierre anulado al devolver la etapa (contaba como cierre del ${fmtDate(lead.cliente_en)})`, req.user.id);
+  if ('calificado_en' in sets && sets.calificado_en === null && lead.calificado_en) act(lead.id, 'campo', 'Calificación anulada al devolver la etapa', req.user.id);
   if ('proxima_accion' in sets || 'proxima_fecha' in sets) {
     const pa = 'proxima_accion' in sets ? sets.proxima_accion : lead.proxima_accion;
     const pf = 'proxima_fecha' in sets ? sets.proxima_fecha : lead.proxima_fecha;

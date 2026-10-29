@@ -239,5 +239,22 @@ export function stageMarks(config, area, etapaId, lead, when) {
     if (calIdx >= 0 && idx >= calIdx && !lead.calificado_en) marks.calificado_en = when;
     if (stage.tipo === 'ganada' && !lead.cliente_en) marks.cliente_en = when;
   }
+  // Devolver un lead de FTD a una etapa anterior anula lo que ya no es cierto: deja de contar como cierre o como calificado.
+  // (En Retención no se toca: el cierre de FTD se conserva aunque el cliente cambie de etapa.)
+  if (area === 'FTD' && stage.tipo !== 'ganada' && lead.cliente_en) marks.cliente_en = null;
+  if (area === 'FTD' && calIdx >= 0 && idx < calIdx && lead.calificado_en) marks.calificado_en = null;
   return marks;
+}
+
+/** Marcas que ya no corresponden a la etapa actual (cierre o calificación fantasma). */
+export function marcasInconsistentes(config, lead) {
+  const stages = config.etapas[lead.area] || [];
+  const idx = stages.findIndex((s) => s.id === lead.etapa);
+  const stage = stages[idx];
+  const calIdx = stages.findIndex((s) => s.tipo === 'calificado');
+  const out = {};
+  if (!stage || lead.area !== 'FTD') return out;
+  if (stage.tipo !== 'ganada' && lead.cliente_en) out.cliente_en = null;
+  if (calIdx >= 0 && idx < calIdx && lead.calificado_en) out.calificado_en = null;
+  return out;
 }

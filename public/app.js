@@ -890,9 +890,25 @@
         <p class="small faint" style="margin:0">Se compara sin tildes ni mayúsculas. "Respuesta del formulario" usa la pregunta que contiene… y la respuesta que contiene…; los demás campos se evalúan solos con lo que llega de Meta (país, correo, nombre, hora de llegada, repetido).</p>
       </div>
       <div class="actions"><button class="btn primary" id="saveSettings">Guardar ajustes</button></div>
+      <div class="panel"><h2>Corrección de cierres y calificaciones</h2>
+        <p class="small muted" style="margin:0">Si un lead fue movido a Cliente (o más allá de Calificado) por error y luego lo devolvieron, puede seguir contando como cierre o como calificado. Desde aquí revisas cuántos hay y los anulas de una vez; cada anulación queda en el historial del lead. Al devolver la etapa de un lead, Zigga ya lo anula solo.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="sanearVer">Revisar</button><button class="btn sm danger" id="sanearOk" hidden>Anular los que no corresponden</button></div>
+        <div id="sanearOut" class="small"></div></div>
       <div class="panel danger-zone"><h2>Zona de peligro</h2>
         <p class="small muted" style="margin:0">Para entregar esta instancia limpia: borra todos los leads, su historial, tareas e informes del coach. Los usuarios, las etapas y los ajustes se conservan. Antes de borrar se guarda una copia de seguridad automática.</p>
         <div><button class="btn danger" id="wipeBtn">Vaciar todos los leads…</button></div></div></div>`;
+    $('#sanearVer').onclick = async () => {
+      try {
+        const r = await api('POST', '/api/admin/sanear-marcas', { aplicar: false });
+        const out = $('#sanearOut');
+        if (!r.detalle.length) { out.innerHTML = '<span class="muted">Todo en orden: ningún cierre ni calificación fuera de lugar.</span>'; $('#sanearOk').hidden = true; return; }
+        out.innerHTML = `<p style="margin:6px 0"><b>${r.cierres}</b> cierre(s) y <b>${r.calificaciones}</b> calificación(es) que no corresponden a la etapa actual:</p><div class="list">${r.detalle.map((d) => `<div class="item"><div class="body"><div class="t">${h(d.nombre)} <span class="chip">${h(d.etapa)}</span> ${d.cierre ? '<span class="chip bad">cuenta como cierre</span>' : ''} ${d.calificacion ? '<span class="chip warn">cuenta como calificado</span>' : ''}</div><div class="m">${h(d.responsable)}</div></div></div>`).join('')}</div>`;
+        $('#sanearOk').hidden = false;
+      } catch (e) { fail(e); }
+    };
+    $('#sanearOk').onclick = async () => {
+      try { const r = await api('POST', '/api/admin/sanear-marcas', { aplicar: true }); toast(`${r.cierres} cierre(s) y ${r.calificaciones} calificación(es) anulados`, 'good'); await load(); go('ajustes'); } catch (e) { fail(e); }
+    };
     $('#wipeBtn').onclick = () => {
       modal(`<h2>Vaciar todos los leads</h2><p class="muted">Se borrarán <b>${S.leads.length} leads</b> (de tus áreas y de las demás), su historial, ${S.tasks.length} tareas y los informes del coach. Se guarda una copia de seguridad antes. Escribe <b>BORRAR</b> para confirmar.</p>
         <input class="input" id="wipeConfirm" placeholder="BORRAR" autocapitalize="characters">
@@ -1094,6 +1110,7 @@
           </div>
           <div class="saving" id="saving"></div>
         </section>
+        ${isAdmin() && l.area === 'FTD' && ((l.cliente_en && st.tipo !== 'ganada') || (l.calificado_en && stages(l.area).findIndex((s) => s.id === l.etapa) < stages(l.area).findIndex((s) => s.tipo === 'calificado'))) ? `<section class="rep-box" style="border-color:var(--bad)"><h3>Corrección</h3><p class="small muted" style="margin:0">${l.cliente_en && st.tipo !== 'ganada' ? `Este lead <b>cuenta como cierre</b> (${fmtDT(l.cliente_en)}) aunque está en ${h(st.nombre)}.` : `Este lead <b>cuenta como calificado</b> aunque está en ${h(st.nombre)}.`} Seguramente lo movieron por error y lo devolvieron. Anúlalo para que no sume en Métricas ni en el Marcador.</p><div><button class="btn sm danger" id="dAnular">${l.cliente_en && st.tipo !== 'ganada' ? 'Anular cierre' : 'Anular calificación'}</button></div></section>` : ''}
         <section><h3>Datos</h3>
           <div class="field-grid">
             <label class="field">Nombre<input class="input" id="dNombre" value="${h(l.nombre)}" data-f="nombre"></label>
@@ -1145,6 +1162,7 @@
       catch (e) { fail(e); saving(''); renderDrawer(true); }
     };
     $('#dEtapa').onchange = (e) => changeStage(l, e.target.value);
+    $('#dAnular') && ($('#dAnular').onclick = async () => { try { const d = await api('POST', `/api/leads/${l.id}/anular-marcas`, {}); replaceLead(d.lead); toast(d.anulado.includes('cliente_en') ? 'Cierre anulado' : 'Calificación anulada', 'good'); } catch (e) { fail(e); } });
     $('#dResp').onchange = (e) => save({ responsable_id: e.target.value || null });
     $('#dMotivo') && ($('#dMotivo').onchange = (e) => save({ motivo_perdida: e.target.value || null }));
     const debounced = debounce((f, v) => save({ [f]: v }), 600);
