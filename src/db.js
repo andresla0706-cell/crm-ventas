@@ -163,6 +163,32 @@ function migrate(db) {
   add('prioridad_detalle', 'TEXT');
   add('repeticiones', 'INTEGER NOT NULL DEFAULT 0');
   add('ultima_repeticion_en', 'TEXT');
+  // Crédito del cierre: quién cerró en FTD y con qué monto, fijos aunque el lead pase a Retención.
+  add('cerrado_por', 'INTEGER');
+  add('monto_cierre', 'REAL');
+  add('calificado_por', 'INTEGER');
+  add('ftd_responsable_id', 'INTEGER');
+  // Retención lleva sus propios logros: redepósitos.
+  add('redeposito_en', 'TEXT');
+  add('redeposito_por', 'INTEGER');
+  add('monto_redeposito', 'REAL');
+  backfillCredito(db);
+}
+
+/** Completa cerrado_por / monto_cierre / ftd_responsable_id en leads viejos, a partir del historial. */
+function backfillCredito(db) {
+  const pend = db.prepare("SELECT id, responsable_id, area, monto, cliente_en, calificado_en, cerrado_por, calificado_por, ftd_responsable_id FROM leads WHERE (cliente_en IS NOT NULL AND cerrado_por IS NULL) OR (calificado_en IS NOT NULL AND calificado_por IS NULL) OR (area = 'RET' AND ftd_responsable_id IS NULL)").all();
+  if (!pend.length) return;
+  const actor = db.prepare("SELECT user_id FROM activities WHERE lead_id = ? AND tipo = ? AND texto LIKE ? AND user_id IS NOT NULL ORDER BY en DESC LIMIT 1");
+  const up = db.prepare('UPDATE leads SET cerrado_por = COALESCE(cerrado_por, ?), monto_cierre = COALESCE(monto_cierre, ?), calificado_por = COALESCE(calificado_por, ?), ftd_responsable_id = COALESCE(ftd_responsable_id, ?) WHERE id = ?');
+  for (const l of pend) {
+    const enFtd = l.area === 'FTD' ? l.responsable_id : null;
+    const paso = l.area === 'RET' ? actor.get(l.id, 'area', 'Pasó a Retención%')?.user_id ?? null : null;
+    const ftdResp = l.area === 'RET' ? paso : null;
+    const cerro = l.cliente_en ? (actor.get(l.id, 'etapa', '% → Cliente')?.user_id ?? enFtd ?? paso) : null;
+    const calif = l.calificado_en ? (actor.get(l.id, 'etapa', '% → Calificado')?.user_id ?? enFtd ?? paso) : null;
+    up.run(cerro, l.cliente_en ? l.monto : null, calif, ftdResp, l.id);
+  }
 }
 
 export function nowIso() {
@@ -225,24 +251,34 @@ export function forwardStage(stages, currentId, target) {
 }
 
 /** Stage-derived timestamps when a lead enters `etapaId` within `area`. */
-export function stageMarks(config, area, etapaId, lead, when) {
+/**
+ * Marcas de etapa. `por` = a quién se le acredita (el responsable del lead, o quien hizo el cambio si no tiene responsable).
+ * FTD: calificado_en/calificado_por y cliente_en/cerrado_por/monto_cierre. Retención: redeposito_en/redeposito_por/monto_redeposito.
+ * El cierre de FTD queda fijo aunque el lead pase a Retención: ese logro es de quien lo cerró.
+ */
+export function stageMarks(config, area, etapaId, lead, when, por = null) {
   const stages = config.etapas[area] || [];
   const idx = stages.findIndex((s) => s.id === etapaId);
   const stage = stages[idx];
   const marks = {};
   if (!stage) return marks;
+  const credito = lead.responsable_id ?? por ?? null;
   const calIdx = stages.findIndex((s) => s.tipo === 'calificado');
   if (stage.tipo === 'perdida') {
     marks.perdido_en = when;
   } else {
     marks.perdido_en = null;
-    if (calIdx >= 0 && idx >= calIdx && !lead.calificado_en) marks.calificado_en = when;
-    if (stage.tipo === 'ganada' && !lead.cliente_en) marks.cliente_en = when;
+    if (area === 'FTD') {
+      if (calIdx >= 0 && idx >= calIdx && !lead.calificado_en) { marks.calificado_en = when; marks.calificado_por = credito; }
+      if (stage.tipo === 'ganada' && !lead.cliente_en) { marks.cliente_en = when; marks.cerrado_por = credito; marks.monto_cierre = lead.monto ?? null; }
+    } else if (stage.tipo === 'ganada') {
+      marks.redeposito_en = when; marks.redeposito_por = credito; marks.monto_redeposito = lead.monto ?? null;
+    }
   }
   // Devolver un lead de FTD a una etapa anterior anula lo que ya no es cierto: deja de contar como cierre o como calificado.
   // (En Retención no se toca: el cierre de FTD se conserva aunque el cliente cambie de etapa.)
-  if (area === 'FTD' && stage.tipo !== 'ganada' && lead.cliente_en) marks.cliente_en = null;
-  if (area === 'FTD' && calIdx >= 0 && idx < calIdx && lead.calificado_en) marks.calificado_en = null;
+  if (area === 'FTD' && stage.tipo !== 'ganada' && lead.cliente_en) { marks.cliente_en = null; marks.cerrado_por = null; marks.monto_cierre = null; }
+  if (area === 'FTD' && calIdx >= 0 && idx < calIdx && lead.calificado_en) { marks.calificado_en = null; marks.calificado_por = null; }
   return marks;
 }
 
@@ -254,7 +290,7 @@ export function marcasInconsistentes(config, lead) {
   const calIdx = stages.findIndex((s) => s.tipo === 'calificado');
   const out = {};
   if (!stage || lead.area !== 'FTD') return out;
-  if (stage.tipo !== 'ganada' && lead.cliente_en) out.cliente_en = null;
-  if (calIdx >= 0 && idx < calIdx && lead.calificado_en) out.calificado_en = null;
+  if (stage.tipo !== 'ganada' && lead.cliente_en) { out.cliente_en = null; out.cerrado_por = null; out.monto_cierre = null; }
+  if (calIdx >= 0 && idx < calIdx && lead.calificado_en) { out.calificado_en = null; out.calificado_por = null; }
   return out;
 }

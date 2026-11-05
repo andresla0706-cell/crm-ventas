@@ -239,7 +239,7 @@ app.post('/api/leads', requireAuth, (req, res) => {
   const id = Number(r.lastInsertRowid);
   act(id, 'creacion', `Lead creado manualmente por ${req.user.nombre}`, req.user.id);
   if (responsable_id) act(id, 'asignacion', `Asignado a ${userName(responsable_id)}`, req.user.id, null, userName(responsable_id));
-  const marks = stageMarks(config, area, etapa, {}, now);
+  const marks = stageMarks(config, area, etapa, { responsable_id }, now, req.user.id);
   if (Object.keys(marks).length) applyMarks(id, marks);
   try { recalcularPrioridades(db, [id]); } catch (e) { console.warn('[prioridad]', e.message); }
   const creado = rowToLead(q.leadById.get(id));
@@ -347,7 +347,7 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
     const target = stages.some((s) => s.id === b.etapa) ? b.etapa : (sets.area ? stages[0]?.id : lead.etapa);
     if (target && target !== lead.etapa) {
       sets.etapa = target;
-      Object.assign(sets, stageMarks(config, area, target, lead, now));
+      Object.assign(sets, stageMarks(config, area, target, lead, now, req.user.id));
       const st = stages.find((s) => s.id === target);
       if (st?.tipo !== 'perdida' && !('motivo_perdida' in sets)) sets.motivo_perdida = null;
       // Avanzar más allá de la primera etapa implica que hubo contacto.
@@ -368,6 +368,11 @@ app.patch('/api/leads/:id', requireAuth, (req, res) => {
     }
   }
 
+  // El monto editado mientras el lead está cerrado en FTD es el monto del cierre.
+  if ('monto' in sets && lead.area === 'FTD' && !sets.area) {
+    const enCierre = 'cliente_en' in sets ? !!sets.cliente_en : !!lead.cliente_en;
+    if (enCierre) sets.monto_cierre = sets.monto;
+  } else if ('monto_cierre' in sets && sets.monto_cierre === null && !('cliente_en' in sets)) delete sets.monto_cierre;
   if (!Object.keys(sets).length) return res.json({ lead: rowToLead(lead) });
   sets.actualizado_en = now;
   if ('responsable_id' in sets) { sets.asignado_en = sets.responsable_id == null ? null : now; sets.ultimo_toque_en = null; sets.reasignaciones = 0; }
@@ -419,8 +424,9 @@ app.post('/api/leads/:id/retencion', requireAuth, (req, res) => {
     }
   }
   const now = nowIso();
-  db.prepare('UPDATE leads SET area = ?, etapa = ?, responsable_id = ?, retencion_en = COALESCE(retencion_en, ?), perdido_en = NULL, motivo_perdida = NULL, actualizado_en = ?, asignado_en = ?, ultimo_toque_en = ? WHERE id = ?')
-    .run('RET', first, rid, now, now, rid == null ? null : now, rid === req.user.id ? now : null, lead.id);
+  db.prepare(`UPDATE leads SET area = ?, etapa = ?, responsable_id = ?, retencion_en = COALESCE(retencion_en, ?), perdido_en = NULL, motivo_perdida = NULL, actualizado_en = ?, asignado_en = ?, ultimo_toque_en = ?,
+      ftd_responsable_id = COALESCE(ftd_responsable_id, ?), cerrado_por = CASE WHEN cliente_en IS NOT NULL THEN COALESCE(cerrado_por, ?) ELSE cerrado_por END, monto_cierre = CASE WHEN cliente_en IS NOT NULL THEN COALESCE(monto_cierre, monto) ELSE monto_cierre END WHERE id = ?`)
+    .run('RET', first, rid, now, now, rid == null ? null : now, rid === req.user.id ? now : null, lead.responsable_id ?? req.user.id, lead.responsable_id ?? req.user.id, lead.id);
   act(lead.id, 'area', `Pasó a Retención (etapa ${stageName(config, 'RET', first)})`, req.user.id, 'FTD', 'RET');
   if (rid !== lead.responsable_id) act(lead.id, 'asignacion', rid ? `Asignado a ${userName(rid)}` : 'Quedó sin asignar: pendiente de entregar al equipo de Retención', req.user.id, userName(lead.responsable_id), userName(rid));
   const enRet = rowToLead(q.leadById.get(lead.id));
@@ -560,7 +566,7 @@ app.get('/api/marcador', requireAuth, (req, res) => {
   const areaUsers = areas.includes('FTD') && areas.includes('RET') ? ['FTD', 'RET', 'AMBAS'] : [...areas, 'AMBAS'];
   const users = db.prepare(`SELECT id, nombre, role, area FROM users WHERE activo = 1 AND area IN (${areaUsers.map(() => '?').join(',')}) ORDER BY nombre`).all(...areaUsers);
   const perdidaIds = new Set(); for (const a of areas) for (const st of config.etapas[a] || []) if (st.tipo === 'perdida') perdidaIds.add(`${a}:${st.id}`);
-  const leads = db.prepare(`SELECT id, responsable_id, area, etapa, monto, primer_contacto_en, sin_respuesta_en, calificado_en, cliente_en, asignado_en FROM leads WHERE ${areaSql}`).all(...areas);
+  const leads = db.prepare(`SELECT id, responsable_id, area, etapa, monto, primer_contacto_en, sin_respuesta_en, calificado_en, calificado_por, cliente_en, cerrado_por, monto_cierre, ftd_responsable_id, redeposito_en, redeposito_por, monto_redeposito, asignado_en FROM leads WHERE ${areaSql}${areas.includes('FTD') ? ' OR retencion_en IS NOT NULL' : ''}`).all(...areas);
   const acts = db.prepare(`SELECT a.user_id, a.tipo, a.texto, a.en FROM activities a JOIN leads l ON l.id = a.lead_id WHERE l.${areaSql} AND a.user_id IS NOT NULL AND a.tipo IN ('llamada','whatsapp','reunion') AND a.en >= ?`).all(...areas, new Date(Date.now() - 45 * 86400000).toISOString());
   const dayKey = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/Bogota' });
   const hoy = dayKey(nowIso());
@@ -569,7 +575,10 @@ app.get('/api/marcador', requireAuth, (req, res) => {
     const mineActs = acts.filter((a) => a.user_id === u.id);
     const enPeriodo = mineActs.filter((a) => a.en >= desde);
     const esContacto = (a) => a.tipo !== 'llamada' || !/^No contestó/.test(a.texto || '');
-    const cerrados = mine.filter((l) => l.cliente_en && l.cliente_en >= desde);
+    // El cierre de FTD es de quien lo cerró (aunque el lead ya esté en Retención); el redepósito es del asesor de Retención.
+    const cerrados = areas.includes('FTD') ? leads.filter((l) => l.cliente_en && l.cliente_en >= desde && (l.cerrado_por ?? l.ftd_responsable_id ?? l.responsable_id) === u.id) : [];
+    const redepositos = areas.includes('RET') ? leads.filter((l) => l.area === 'RET' && l.redeposito_en && l.redeposito_en >= desde && (l.redeposito_por ?? l.responsable_id) === u.id) : [];
+    const calificados = leads.filter((l) => l.calificado_en && l.calificado_en >= desde && (l.calificado_por ?? l.ftd_responsable_id ?? l.responsable_id) === u.id);
     const dias = new Set(mineActs.filter(esContacto).map((a) => dayKey(a.en)));
     let racha = 0; const d = new Date(); if (!dias.has(hoy)) d.setDate(d.getDate() - 1);
     while (dias.has(dayKey(d.toISOString()))) { racha++; d.setDate(d.getDate() - 1); }
@@ -577,9 +586,11 @@ app.get('/api/marcador', requireAuth, (req, res) => {
       id: u.id, nombre: u.nombre, role: u.role, area: u.area,
       llamadas: enPeriodo.filter((a) => a.tipo === 'llamada').length,
       contactos: enPeriodo.filter(esContacto).length,
-      calificados: mine.filter((l) => l.calificado_en && l.calificado_en >= desde).length,
-      cierres: cerrados.length,
-      monto: cerrados.reduce((a, l) => a + (Number(l.monto) || 0), 0),
+      calificados: calificados.length,
+      cierres: cerrados.length + redepositos.length,
+      cierres_ftd: cerrados.length,
+      redepositos: redepositos.length,
+      monto: cerrados.reduce((a, l) => a + (Number(l.monto_cierre ?? l.monto) || 0), 0) + redepositos.reduce((a, l) => a + (Number(l.monto_redeposito ?? l.monto) || 0), 0),
       nuevos: mine.filter((l) => l.asignado_en && l.asignado_en >= desde).length,
       sin_contactar: mine.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en && !perdidaIds.has(`${l.area}:${l.etapa}`)).length,
       abiertos: mine.filter((l) => !perdidaIds.has(`${l.area}:${l.etapa}`)).length,
@@ -624,7 +635,7 @@ app.post('/api/leads/:id/resultado', requireAuth, (req, res) => {
     case 'contesto': { markContact(); nextStage = forwardStage(stages, lead.etapa, contactado); texto = 'Contestó'; break; }
     default: return res.status(400).json({ error: 'Resultado desconocido.' });
   }
-  if (nextStage !== lead.etapa) { sets.etapa = nextStage; Object.assign(sets, stageMarks(config, lead.area, nextStage, lead, now)); }
+  if (nextStage !== lead.etapa) { sets.etapa = nextStage; Object.assign(sets, stageMarks(config, lead.area, nextStage, lead, now, req.user.id)); }
   const keys = Object.keys(sets);
   db.prepare(`UPDATE leads SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k]), lead.id);
   act(lead.id, 'llamada', texto, req.user.id);
@@ -875,11 +886,11 @@ app.get('/api/export.csv', requireAdmin, (req, res) => {
   const config = getConfig(db);
   const areas = allowedAreas(req.user);
   const rows = db.prepare(`SELECT * FROM leads WHERE area IN (${areas.map(() => '?').join(',')}) ORDER BY id`).all(...areas);
-  const cols = ['id', 'nombre', 'correo', 'whatsapp', 'pais', 'ciudad', 'monto', 'area', 'etapa', 'responsable', 'proxima_accion', 'proxima_fecha', 'notas', 'motivo_perdida', 'origen_tipo', 'meta_lead_id', 'campaign_name', 'adset_name', 'ad_name', 'form_name', 'platform', 'respuestas', 'lead_creado_en', 'calificado_en', 'cliente_en', 'perdido_en', 'retencion_en'];
+  const cols = ['id', 'nombre', 'correo', 'whatsapp', 'pais', 'ciudad', 'monto', 'area', 'etapa', 'responsable', 'proxima_accion', 'proxima_fecha', 'notas', 'motivo_perdida', 'origen_tipo', 'meta_lead_id', 'campaign_name', 'adset_name', 'ad_name', 'form_name', 'platform', 'respuestas', 'lead_creado_en', 'calificado_en', 'cliente_en', 'cerrado_por', 'monto_cierre', 'perdido_en', 'retencion_en', 'redeposito_en'];
   const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = [cols.join(',')];
   for (const r of rows) {
-    const o = { ...r, etapa: stageName(config, r.area, r.etapa), responsable: r.responsable_id ? userName(r.responsable_id) : '' };
+    const o = { ...r, etapa: stageName(config, r.area, r.etapa), responsable: r.responsable_id ? userName(r.responsable_id) : '', cerrado_por: r.cerrado_por ? userName(r.cerrado_por) : '' };
     lines.push(cols.map((c) => esc(o[c])).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

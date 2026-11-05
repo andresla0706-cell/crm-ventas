@@ -602,18 +602,23 @@
     const f = S.metricFilters;
     const since = f.periodo === 'todo' ? null : new Date(Date.now() - Number(f.periodo) * 86400000).toISOString();
     // FTD cuenta también los leads que ya pasaron a Retención (cerraron en FTD antes).
+    const esRet = f.area === 'RET';
+    // En FTD, el vendedor de un lead es quien lo trabajó en FTD aunque ya esté en Retención; el cierre es de quien lo cerró.
+    const vend = (l) => (esRet ? l.responsable_id : (l.area === 'RET' ? (l.cerrado_por ?? l.ftd_responsable_id ?? l.responsable_id) : l.responsable_id));
+    const gano = (l) => (esRet ? !!l.redeposito_en : !!l.cliente_en);
+    const montoGanado = (l) => (esRet ? Number(l.monto_redeposito ?? l.monto) || 0 : Number(l.monto_cierre ?? l.monto) || 0);
     let base = S.leads.filter((l) => (f.area === 'AMBAS' ? true : f.area === 'FTD' ? (l.area === 'FTD' || !!l.retencion_en) : l.area === 'RET'));
-    if (f.responsable) base = base.filter((l) => l.responsable_id === Number(f.responsable));
+    if (f.responsable) base = base.filter((l) => vend(l) === Number(f.responsable));
     const inPeriod = base.filter((l) => !since || (l.lead_creado_en || l.creado_en) >= since);
-    const cal = inPeriod.filter((l) => l.calificado_en).length, cli = inPeriod.filter((l) => l.cliente_en).length, per = inPeriod.filter((l) => l.perdido_en).length;
+    const cal = inPeriod.filter((l) => l.calificado_en).length, cli = inPeriod.filter(gano).length, per = inPeriod.filter((l) => l.perdido_en).length;
     const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
-    const montoCli = inPeriod.filter((l) => l.cliente_en).reduce((a, l) => a + (Number(l.monto) || 0), 0);
+    const montoCli = inPeriod.filter(gano).reduce((a, l) => a + montoGanado(l), 0);
     const minutosContacto = (l) => (l.primer_contacto_en ? Math.max(0, (new Date(l.primer_contacto_en) - new Date(l.asignado_en || l.lead_creado_en || l.creado_en)) / 60000) : null);
     const mediana = (arr) => { const a = arr.filter((x) => x != null).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
     const med = mediana(inPeriod.map(minutosContacto));
     const sinContacto = inPeriod.filter((l) => !l.primer_contacto_en && !l.sin_respuesta_en && stage(l).tipo === 'abierta').length;
     const pipeline = base.filter((l) => !['ganada', 'perdida'].includes(stage(l).tipo)).reduce((a, l) => a + (Number(l.monto) || 0), 0);
-    const group = (list, keyFn) => { const m = new Map(); for (const l of list) { const k = keyFn(l) || '—'; const g = m.get(k) || { k, n: 0, cal: 0, cli: 0, monto: 0, mins: [] }; g.n++; if (l.calificado_en) g.cal++; if (l.cliente_en) { g.cli++; g.monto += Number(l.monto) || 0; } g.mins.push(minutosContacto(l)); m.set(k, g); } return [...m.values()].sort((a, b) => b.n - a.n); };
+    const group = (list, keyFn) => { const m = new Map(); for (const l of list) { const k = keyFn(l) || '—'; const g = m.get(k) || { k, n: 0, cal: 0, cli: 0, monto: 0, mins: [] }; g.n++; if (l.calificado_en) g.cal++; if (gano(l)) { g.cli++; g.monto += montoGanado(l); } g.mins.push(minutosContacto(l)); m.set(k, g); } return [...m.values()].sort((a, b) => b.n - a.n); };
     const bars = (rows, cls = '') => { const max = Math.max(1, ...rows.map((r) => r.n)); return `<div class="bars">${rows.slice(0, 12).map((r) => `<div class="bar ${cls}" title="${h(r.k)}: ${r.n} leads · ${r.cal} calificados · ${r.cli} clientes"><span class="lbl">${h(r.k)}</span><div class="track"><div class="fill" style="width:${(r.n / max) * 100}%"></div></div><span class="num small">${r.n}</span></div>`).join('') || '<div class="faint small">Sin datos</div>'}</div>`; };
     const table = (rows, conTiempo = false) => `<div class="tablewrap mini"><table><thead><tr><th></th><th>Leads</th>${conTiempo ? '<th>1er contacto</th>' : ''}<th>Calif.</th><th>Clientes</th><th>Tasa cierre</th><th>Monto</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${h(r.k)}</td><td class="num">${r.n}</td>${conTiempo ? `<td class="num">${mediana(r.mins) != null ? fmtMin(Math.round(mediana(r.mins))) : '—'}</td>` : ''}<td class="num">${r.cal}</td><td class="num">${r.cli}</td><td class="num">${pct(r.cli, r.n)}</td><td class="num">${money(r.monto)}</td></tr>`).join('') || '<tr><td colspan="7" class="faint">Sin datos</td></tr>'}</tbody></table></div>`;
     const areaForStages = f.area === 'AMBAS' ? 'FTD' : f.area;
@@ -629,10 +634,10 @@
         <div class="tiles">
           <div class="tile"><span class="s">Leads nuevos</span><span class="v num">${inPeriod.length}</span><span class="s faint">${f.periodo === 'todo' ? 'histórico' : `últimos ${f.periodo} días`}</span></div>
           <div class="tile"><span class="s">Calificados</span><span class="v num">${cal}</span><span class="s faint">${pct(cal, inPeriod.length)} de los leads</span></div>
-          <div class="tile"><span class="s">Clientes</span><span class="v num">${cli}</span><span class="s faint">${pct(cli, inPeriod.length)} de cierre</span></div>
+          <div class="tile"><span class="s">${esRet ? 'Redepósitos' : 'Clientes'}</span><span class="v num">${cli}</span><span class="s faint">${pct(cli, inPeriod.length)} ${esRet ? 'de los clientes' : 'de cierre'}</span></div>
           <div class="tile"><span class="s">Primer contacto</span><span class="v num">${med != null ? fmtMin(Math.round(med)) : '—'}</span><span class="s faint">mediana · ${sinContacto} sin contactar</span></div>
           <div class="tile"><span class="s">Perdidos</span><span class="v num">${per}</span><span class="s faint">${pct(per, inPeriod.length)}</span></div>
-          <div class="tile"><span class="s">Monto cerrado</span><span class="v num">${money(montoCli)}</span><span class="s faint">clientes del período</span></div>
+          <div class="tile"><span class="s">${esRet ? 'Monto redepositado' : 'Monto cerrado'}</span><span class="v num">${money(montoCli)}</span><span class="s faint">${esRet ? 'redepósitos' : 'cierres'} del período</span></div>
           <div class="tile"><span class="s">En embudo</span><span class="v num">${money(pipeline)}</span><span class="s faint">monto de leads abiertos</span></div>
         </div>
         <div class="two">
@@ -641,7 +646,7 @@
           <div class="panel"><h2>Por campaña</h2>${bars(group(inPeriod, (l) => l.campaign_name || (l.origen_tipo === 'manual' ? 'Manual' : 'Sin campaña')))}</div>
           <div class="panel"><h2>Por país</h2>${bars(group(inPeriod, (l) => countryName(l.pais) || 'Sin país'))}</div>
         </div>
-        ${isAdmin() ? `<div class="panel"><h2>Por vendedor</h2>${table(group(inPeriod, (l) => uname(l.responsable_id)), true)}</div>` : ''}
+        ${isAdmin() ? `<div class="panel"><h2>Por vendedor</h2>${table(group(inPeriod, (l) => uname(vend(l))), true)}</div>` : ''}
         <div class="panel"><h2>Por anuncio · detalle</h2>${table(group(inPeriod, (l) => l.ad_name || (l.origen_tipo === 'manual' ? 'Manual' : 'Sin anuncio')))}</div>
       </div>`;
     $('#mPer').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) { f.periodo = b.dataset.v; renderMetricas(); } };
@@ -679,7 +684,7 @@
         <thead><tr><th></th><th>Vendedor</th><th>Cierres</th><th>Monto</th><th>Calificados</th><th>Contactos</th><th>Sin contactar</th><th>Racha</th></tr></thead>
         <tbody>${eq.map((u, i) => `<tr class="${i === 0 && u.cierres ? 'lead' : ''}"><td class="num">${medal(i)}</td>
           <td class="name"><span class="avatar">${initials(u.nombre)}</span> ${h(u.nombre)}${u.area === 'RET' ? ' <span class="chip ret">RET</span>' : ''}</td>
-          <td>${bar(u.cierres, 'cierres', 'good')}</td><td class="num"><b>${money(u.monto)}</b></td><td>${bar(u.calificados, 'calificados')}</td><td>${bar(u.contactos, 'contactos')}</td>
+          <td title="${u.cierres_ftd || 0} cierre(s) en FTD · ${u.redepositos || 0} redepósito(s) en Retención">${bar(u.cierres, 'cierres', 'good')}${u.redepositos ? ` <span class="chip ret" title="Redepósitos en Retención">${u.redepositos} redep.</span>` : ''}</td><td class="num"><b>${money(u.monto)}</b></td><td>${bar(u.calificados, 'calificados')}</td><td>${bar(u.contactos, 'contactos')}</td>
           <td class="num">${u.sin_contactar ? `<span class="chip ${u.sin_contactar > 5 ? 'bad' : 'warn'}">${u.sin_contactar}</span>` : '<span class="faint">0</span>'}</td>
           <td class="num">${u.racha ? `🔥 ${u.racha} d` : '<span class="faint">—</span>'}</td></tr>`).join('') || '<tr><td colspan="8" class="faint">Sin vendedores activos en tus áreas.</td></tr>'}</tbody></table></div>
       <p class="small faint" style="margin:0">Contactos: llamadas contestadas, WhatsApp y reuniones registradas. Racha: días seguidos con al menos un contacto.</p>`;
@@ -1089,7 +1094,7 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
             <span class="chip ${l.area === 'RET' ? 'ret' : 'accent'}">${areaLabel(l.area)}</span>
             <span class="chip ${st.tipo === 'ganada' ? 'good' : st.tipo === 'perdida' ? 'bad' : ''}">${h(st.nombre)}</span>
-            <span class="chip">${origenLabel(l)}</span>${repChip(l)}
+            <span class="chip">${origenLabel(l)}</span>${repChip(l)}${l.cliente_en ? `<span class="chip good" title="Cierre en FTD: ${h(uname(l.cerrado_por))} · ${fmtDT(l.cliente_en)}">Cierre FTD${l.monto_cierre != null ? ` ${money(l.monto_cierre)}` : ''} · ${h(uname(l.cerrado_por))}</span>` : ''}${l.redeposito_en ? `<span class="chip ret" title="Redepósito: ${h(uname(l.redeposito_por))} · ${fmtDT(l.redeposito_en)}">Redepósito${l.monto_redeposito != null ? ` ${money(l.monto_redeposito)}` : ''}</span>` : ''}
             <span class="faint small">${ago(l.lead_creado_en || l.creado_en)}</span>
           </div>
         </div>
@@ -1110,7 +1115,7 @@
           </div>
           <div class="saving" id="saving"></div>
         </section>
-        ${isAdmin() && l.area === 'FTD' && ((l.cliente_en && st.tipo !== 'ganada') || (l.calificado_en && stages(l.area).findIndex((s) => s.id === l.etapa) < stages(l.area).findIndex((s) => s.tipo === 'calificado'))) ? `<section class="rep-box" style="border-color:var(--bad)"><h3>Corrección</h3><p class="small muted" style="margin:0">${l.cliente_en && st.tipo !== 'ganada' ? `Este lead <b>cuenta como cierre</b> (${fmtDT(l.cliente_en)}) aunque está en ${h(st.nombre)}.` : `Este lead <b>cuenta como calificado</b> aunque está en ${h(st.nombre)}.`} Seguramente lo movieron por error y lo devolvieron. Anúlalo para que no sume en Métricas ni en el Marcador.</p><div><button class="btn sm danger" id="dAnular">${l.cliente_en && st.tipo !== 'ganada' ? 'Anular cierre' : 'Anular calificación'}</button></div></section>` : ''}
+        ${isAdmin() && l.area === 'FTD' && ((l.cliente_en && st.tipo !== 'ganada') || (l.calificado_en && stages(l.area).findIndex((s) => s.id === l.etapa) < stages(l.area).findIndex((s) => s.tipo === 'calificado'))) ? `<section class="rep-box" style="border-color:var(--bad)"><h3>Corrección</h3><p class="small muted" style="margin:0">${l.cliente_en && st.tipo !== 'ganada' ? `Este lead <b>cuenta como cierre</b> (${fmtDT(l.cliente_en)}) aunque está en ${h(st.nombre)}.` : `Este lead <b>cuenta como calificado</b> aunque está en ${h(st.nombre)}.`} ${l.cliente_en && st.tipo !== 'ganada' ? 'Suele pasar cuando lo mueven a Cliente por error y lo devuelven.' : 'Suele pasar cuando una etapa estuvo ubicada después de Calificado y luego se reordenó, o cuando lo devolvieron de Calificado.'} Anúlalo para que no sume en Métricas ni en el Marcador; en Ajustes puedes anular todos de una vez.</p><div><button class="btn sm danger" id="dAnular">${l.cliente_en && st.tipo !== 'ganada' ? 'Anular cierre' : 'Anular calificación'}</button></div></section>` : ''}
         <section><h3>Datos</h3>
           <div class="field-grid">
             <label class="field">Nombre<input class="input" id="dNombre" value="${h(l.nombre)}" data-f="nombre"></label>
@@ -1118,7 +1123,7 @@
             <label class="field">Correo<input class="input" id="dCorreo" value="${h(l.correo || '')}" data-f="correo" type="email"></label>
             <label class="field">País<input class="input" id="dPais" value="${h(l.pais || '')}" data-f="pais" placeholder="CO, MX…"></label>
             <label class="field">Ciudad<input class="input" id="dCiudad" value="${h(l.ciudad || '')}" data-f="ciudad"></label>
-            <label class="field">Cuánto va a pagar (${h(S.config.moneda)})<input class="input num" id="dMonto" value="${l.monto ?? ''}" data-f="monto" inputmode="decimal"></label>
+            <label class="field">${l.area === 'RET' ? 'Monto del redepósito' : 'Cuánto va a pagar'} (${h(S.config.moneda)})<input class="input num" id="dMonto" value="${l.monto ?? ''}" data-f="monto" inputmode="decimal">${l.area === 'RET' && l.monto_cierre != null ? `<span class="small faint">El cierre en FTD fue de ${money(l.monto_cierre)} y queda a nombre de ${h(uname(l.cerrado_por))}; este campo es para Retención.</span>` : ''}</label>
             <label class="field">Próxima acción<input class="input" id="dPA" value="${h(l.proxima_accion || '')}" data-f="proxima_accion" placeholder="Llamar, enviar propuesta…"></label>
             <label class="field">Fecha de la próxima acción<input class="input" id="dPF" type="datetime-local" value="${toLocalInput(l.proxima_fecha)}" data-f="proxima_fecha"></label>
           </div>
