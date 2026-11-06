@@ -18,9 +18,12 @@
     var t = localStorage.getItem('crm_theme');
     if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   } catch (e) {}
+  // Navegadores sin soporte de JavaScript moderno (anteriores a 2017) no pueden ejecutar Zigga: se avisa en vez de dejar la pantalla en blanco.
+  try { new Function('async function f(){ await 1; } const {a, ...r} = {a: 1}; [1].includes(1);'); } catch (e) { document.documentElement.className += ' old-browser'; }
 </script>
 </head>
 <body>
+<div id="oldBrowser"><div class="box"><h1>Tu navegador es muy antiguo para Zigga</h1><p>Actualiza Google Chrome o Safari, o abre esta dirección en otro navegador reciente. En el celular, usa Chrome o Safari (no el navegador interno de WhatsApp, Instagram o Facebook).</p><p><a href="https://www.google.com/chrome/">Descargar Chrome</a></p></div></div>
 <div id="login" hidden>
   <section class="login-hero" aria-hidden="true">
     <div class="hero-inner">
